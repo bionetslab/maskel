@@ -21,6 +21,7 @@ from vesskel.features import (
 )
 from vesskel.junction_cleanup import collapse_triangle_junctions
 from vesskel.napari_layers import extract_skeleton_layers
+from vesskel.spur_pruning import prune_short_spurs
 from vesskel.thin import lee94_thin
 
 if TYPE_CHECKING:
@@ -142,14 +143,43 @@ def analyze_binary_image(
             threshold_factor=config.extraction.cleanup_threshold_factor,
         )
 
+    # -- build graph & branch data on the (potentially cleaned) skeleton -
+    graph = build_vessel_graph(skeleton)
+
+    # -- optional: prune short spur branches -----------------------------
+    # (a spur: one node is an endpoint (degree 1), the other a junction
+    # (degree > 1), and the branch is shorter than the configured
+    # threshold - usually a thinning artifact rather than a real vessel
+    # tip. Pruning changes the skeleton's pixels, so the graph is rebuilt
+    # from scratch afterwards.)
+    if config.extraction.prune_spurs:
+        # Pruning may expose new short spurs (an endpoint's parent junction
+        # can become an endpoint once its own spur is removed), so the
+        # operation is repeated on its own output up to spur_iterations times.
+        for _ in range(max(1, config.extraction.spur_iterations)):
+            pre_prune_branch_data = summarize(graph, separator="-")
+            skeleton = prune_short_spurs(
+                skeleton,
+                graph,
+                pre_prune_branch_data,
+                min_length=config.extraction.min_spur_length,
+            )
+            if not skeleton.any():
+                return AnalysisResult(
+                    skeleton=skeleton,
+                    layers=[],
+                    summary_features={},
+                    branch_records=[],
+                    node_records=[],
+                )
+            graph = build_vessel_graph(skeleton)
+
     # -- optional: vessel radius (EDT on the final skeleton) ------------
     radius_matrix = None
     radius_stats = None
     if config.extraction.vessel_radius:
         radius_matrix, radius_stats = compute_radii(binary, skeleton)
 
-    # -- build graph & branch data on the (potentially cleaned) skeleton -
-    graph = build_vessel_graph(skeleton)
     branch_data = summarize(graph, separator="-")
 
     if radius_matrix is not None and not branch_data.empty:

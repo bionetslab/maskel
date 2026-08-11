@@ -52,6 +52,9 @@ class ExtractionConfig:
     vessel_radius: bool = False
     junction_cleanup: bool = False
     cleanup_threshold_factor: float = 2.5
+    prune_spurs: bool = False
+    min_spur_length: float = 10.0
+    spur_iterations: int = 1
     closing_iterations: int = 0
     fill_holes: bool = False
     max_hole_size: int = 0
@@ -68,6 +71,9 @@ class ExtractionConfig:
             "vessel_radius": self.vessel_radius,
             "junction_cleanup": self.junction_cleanup,
             "cleanup_threshold_factor": self.cleanup_threshold_factor,
+            "prune_spurs": self.prune_spurs,
+            "min_spur_length": self.min_spur_length,
+            "spur_iterations": self.spur_iterations,
             "closing_iterations": self.closing_iterations,
             "fill_holes": self.fill_holes,
             "max_hole_size": self.max_hole_size,
