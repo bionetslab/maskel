@@ -64,6 +64,64 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Number of parallel workers (0 = all CPU cores).",
     )
 
+    skel_parser = subparsers.add_parser(
+        "skeletonize_tiled",
+        help=(
+            "Skeletonize one large image tile by tile. Writes only the "
+            "skeleton - no features, no CSVs."
+        ),
+    )
+    skel_parser.add_argument(
+        "--input",
+        required=True,
+        help="Single input image. Not a batch command: tiling targets one "
+        "image that does not fit in memory.",
+    )
+    skel_parser.add_argument(
+        "--out",
+        required=True,
+        help="Work directory. Receives manifest.json, done.jsonl and "
+        "<name>_skeleton.npy. Nothing is staged per tile.",
+    )
+    skel_parser.add_argument(
+        "--tile-shape",
+        nargs="+",
+        type=int,
+        required=True,
+        metavar="N",
+        help="Core tile edge length: one value for all axes, or one per axis. "
+        "This sets peak memory: budget ~5 bytes per voxel of (N + 2*halo) per "
+        "axis, times --jobs. Keep it well above --halo.",
+    )
+    skel_parser.add_argument(
+        "--halo",
+        type=int,
+        default=None,
+        help="Voxels read beyond each tile core (default: 100). Must exceed "
+        "the thinning's reach, roughly 8x the largest vessel radius in 3D.",
+    )
+    skel_parser.add_argument(
+        "--config",
+        help="Optional config JSON. This command only thins, so a config "
+        "requesting preprocessing or junction cleanup is rejected rather "
+        "than ignored.",
+    )
+    skel_parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=1,
+        help="Number of parallel workers (0 = all CPU cores).",
+    )
+    skel_parser.add_argument(
+        "--progress",
+        choices=("auto", "bar", "lines", "off"),
+        default="auto",
+        help="Progress display. 'bar' rewrites one line in place, 'lines' "
+        "prints a new line every few percent (for logs). 'auto' picks the "
+        "bar on a terminal or under PyCharm, lines otherwise.",
+    )
+
     init_parser = subparsers.add_parser(
         "init",
         help="Create a starter config JSON.",
@@ -264,6 +322,68 @@ def _run_parallel(
     return summary_rows
 
 
+def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
+    import warnings
+
+    from vesskel.tiling import DEFAULT_HALO, BlockReader, TileGrid, analyze_tiled
+
+    in_path = Path(args.input)
+    if not in_path.is_file():
+        raise ValueError(f"Input '{in_path}' is not an existing file.")
+    if in_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported input '{in_path.name}'. Expected one of: "
+            f"{', '.join(sorted(_SUPPORTED_EXTENSIONS))}."
+        )
+    if args.jobs < 0:
+        raise ValueError("--jobs must be 0 (auto) or a positive integer")
+
+    config = (
+        load_pipeline_config(Path(args.config))
+        if args.config
+        else PipelineConfig(extraction=ExtractionConfig(), output=OutputConfig())
+    )
+
+    halo = DEFAULT_HALO if args.halo is None else args.halo
+    tile_shape = (
+        args.tile_shape[0] if len(args.tile_shape) == 1 else tuple(args.tile_shape)
+    )
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Only the header is read here - the volume itself is streamed tile by
+    # tile, so nothing proportional to its size is ever resident.
+    shape = BlockReader(in_path).shape
+
+    # Report the geometry up front: the redundant-work factor is the number
+    # people get wrong, and a bad one costs hours on a large volume. The grid
+    # is rebuilt inside analyze_tiled; silence its duplicate warning here.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        grid = TileGrid(shape=shape, tile_shape=tile_shape, halo=halo)
+    print(
+        f"{in_path.name}: shape={shape}, {len(grid)} tile(s) of "
+        f"{grid.tile_shape} with halo={halo} "
+        f"(reads {grid.read_overhead:.2f}x the volume)",
+        flush=True,
+    )
+
+    analyze_tiled(
+        in_path,
+        in_path.stem,
+        config,
+        work_dir=out_dir,
+        tile_shape=tile_shape,
+        halo=halo,
+        jobs=args.jobs,
+        progress=args.progress,
+    )
+
+    print(f"Wrote '{out_dir / f'{in_path.stem}_skeleton.npy'}'.")
+    return 0
+
+
 def _config_init(args: argparse.Namespace) -> int:
     path = Path(args.out)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +415,8 @@ def main() -> int:
     args = _parse_args()
     if args.command == "run":
         return _run_batch(args)
+    if args.command == "skeletonize_tiled":
+        return _run_skeletonize_tiled(args)
     if args.command == "init":
         return _config_init(args)
     if args.command == "validate":

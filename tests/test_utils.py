@@ -48,3 +48,46 @@ class TestToBinary:
         result = to_binary(np.array([], dtype=np.int64).reshape(0, 5))
         assert result.shape == (0, 5)
         assert result.dtype == np.uint8
+
+
+class TestToBinaryInplace:
+    def test_uint8_is_written_in_place(self):
+        arr = np.array([0, 2, 0, 255], dtype=np.uint8)
+        result = to_binary(arr, inplace=True)
+        assert result is arr
+        assert np.array_equal(arr, [0, 1, 0, 1])
+
+    def test_uint8_already_binary_is_unchanged(self):
+        arr = np.array([0, 1, 1, 0], dtype=np.uint8)
+        assert np.array_equal(to_binary(arr, inplace=True), [0, 1, 1, 0])
+
+    def test_read_only_uint8_falls_back_to_a_copy(self):
+        """Readers like PIL hand back read-only arrays; must not raise."""
+        arr = np.array([0, 2, 0, 255], dtype=np.uint8)
+        arr.flags.writeable = False
+
+        result = to_binary(arr, inplace=True)
+
+        assert result is not arr
+        assert result.flags.writeable
+        assert np.array_equal(result, [0, 1, 0, 1])
+        assert np.array_equal(arr, [0, 2, 0, 255])
+
+    def test_non_uint8_falls_back_to_a_copy(self):
+        arr = np.array([0, 2, 0, 4], dtype=np.int32)
+        result = to_binary(arr, inplace=True)
+        assert result is not arr
+        assert result.dtype == np.uint8
+        assert np.array_equal(arr, [0, 2, 0, 4])
+        assert np.array_equal(result, [0, 1, 0, 1])
+
+    def test_multidimensional(self):
+        arr = np.array([[0, 7], [3, 0]], dtype=np.uint8)
+        to_binary(arr, inplace=True)
+        assert np.array_equal(arr, [[0, 1], [1, 0]])
+
+    def test_default_still_copies(self):
+        arr = np.array([0, 2, 0, 255], dtype=np.uint8)
+        result = to_binary(arr)
+        assert result is not arr
+        assert np.array_equal(arr, [0, 2, 0, 255])

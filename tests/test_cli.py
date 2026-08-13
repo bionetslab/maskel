@@ -163,6 +163,26 @@ class TestLoadImage:
         arr = load_image(path)
         assert arr.shape == (3, 4, 5)
 
+    def test_load_multipage_tif_keeps_every_slice(self, tmp_path):
+        """PIL returns only the first frame; a 3D stack must stay 3D."""
+        import tifffile
+
+        path = tmp_path / "vol.tif"
+        volume = np.zeros((7, 12, 10), dtype=np.uint8)
+        volume[3, 5, 5] = 1  # a marker no first-frame-only reader would see
+        tifffile.imwrite(path, volume)
+
+        arr = load_image(path)
+        assert arr.shape == (7, 12, 10)
+        assert arr[3, 5, 5] == 1
+
+    def test_load_single_page_tif_stays_2d(self, tmp_path):
+        import tifffile
+
+        path = tmp_path / "flat.tif"
+        tifffile.imwrite(path, np.eye(9, dtype=np.uint8))
+        assert load_image(path).shape == (9, 9)
+
     def test_load_invalid_dimension_raises(self, tmp_path):
         path = tmp_path / "bad.npy"
         np.save(path, np.ones((2, 2, 2, 2), dtype=np.uint8))
@@ -515,3 +535,209 @@ class TestMainCommands:
         monkeypatch.setattr(sys, "argv", ["vesskel", "validate", str(config_path)])
         exit_code = main()
         assert exit_code == 0
+
+
+def _write_cross_npy(path, size=48):
+    image = np.zeros((size, size), dtype=np.uint8)
+    image[size // 2 - 2 : size // 2 + 2, :] = 1
+    image[:, size // 2 - 2 : size // 2 + 2] = 1
+    np.save(path, image)
+    return image
+
+
+class TestSkeletonizeTiledCommand:
+    """`vesskel skeletonize_tiled` - single image, tiled, skeleton only."""
+
+    def _args(self, tmp_path, **overrides):
+        args = {
+            "input": str(tmp_path / "vessels.npy"),
+            "out": str(tmp_path / "work"),
+            "tile_shape": [16],
+            "halo": 4,
+            "config": None,
+            "jobs": 1,
+            "progress": "off",
+        }
+        args.update(overrides)
+        return _make_args(**args)
+
+    def test_writes_skeleton_manifest_and_done_log(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+        from vesskel.tiling import DONE_LOG_NAME
+
+        image = _write_cross_npy(tmp_path / "vessels.npy")
+
+        assert _run_skeletonize_tiled(self._args(tmp_path)) == 0
+
+        work = tmp_path / "work"
+        skeleton = np.load(work / "vessels_skeleton.npy")
+        assert skeleton.shape == image.shape
+        assert skeleton.dtype == np.uint8
+        assert np.count_nonzero(skeleton) > 0
+        assert (work / "manifest.json").is_file()
+        assert (work / DONE_LOG_NAME).is_file()
+        # Streaming writes no per-tile staging files.
+        assert not (work / "tiles").exists()
+        assert not (work / "skeletons").exists()
+
+    def test_matches_untiled_thinning(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+        from vesskel.thin import lee94_thin
+
+        image = _write_cross_npy(tmp_path / "vessels.npy")
+        _run_skeletonize_tiled(self._args(tmp_path))
+
+        written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
+        assert np.array_equal(written, lee94_thin(image))
+
+    def test_read_only_input_from_an_image_reader(self, tmp_path):
+        """PIL/tifffile can hand back read-only arrays; in-place must yield."""
+        from vesskel.cli import _run_skeletonize_tiled
+
+        image = np.zeros((48, 48), dtype=np.uint8)
+        image[22:26, :] = 255
+        image[:, 22:26] = 255
+        Image.fromarray(image).save(tmp_path / "vessels.png")
+
+        args = self._args(tmp_path, input=str(tmp_path / "vessels.png"))
+        assert _run_skeletonize_tiled(args) == 0
+        assert np.count_nonzero(np.load(tmp_path / "work" / "vessels_skeleton.npy")) > 0
+
+    def test_per_axis_tile_shape(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+        from vesskel.tiling import read_manifest
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        _run_skeletonize_tiled(self._args(tmp_path, tile_shape=[16, 24]))
+
+        assert read_manifest(tmp_path / "work").tile_shape == (16, 24)
+
+    def test_halo_defaults_when_omitted(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+        from vesskel.tiling import DEFAULT_HALO, read_manifest
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        _run_skeletonize_tiled(self._args(tmp_path, halo=None))
+
+        assert read_manifest(tmp_path / "work").halo == DEFAULT_HALO
+
+    @pytest.mark.parametrize(
+        "extraction",
+        [
+            {"closing_iterations": 2},
+            {"fill_holes": True},
+            {"max_hole_size": 64},
+            {"junction_cleanup": True},
+        ],
+    )
+    def test_processing_config_is_rejected(self, tmp_path, extraction):
+        """The command only thins; anything else must fail loudly, not silently."""
+        from vesskel.cli import _run_skeletonize_tiled
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        config_path = tmp_path / "cfg.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "extraction": extraction,
+                    "output": {},
+                }
+            )
+        )
+
+        (name,) = extraction
+        with pytest.raises(NotImplementedError, match=name):
+            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
+
+    def test_feature_config_is_accepted_and_ignored(self, tmp_path):
+        """Only the skeleton is produced, so extraction flags are not errors."""
+        from vesskel.cli import _run_skeletonize_tiled
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        config_path = tmp_path / "cfg.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "extraction": {"branches": True, "nodes": True},
+                    "output": {"write_branch_csv": True},
+                }
+            )
+        )
+
+        assert _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
+        assert not list((tmp_path / "work").glob("*.csv"))
+
+    def test_missing_input_raises(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+
+        with pytest.raises(ValueError, match="not an existing file"):
+            _run_skeletonize_tiled(self._args(tmp_path))
+
+    def test_unsupported_extension_raises(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+
+        bad = tmp_path / "vessels.txt"
+        bad.write_text("not an image")
+
+        with pytest.raises(ValueError, match="Unsupported input"):
+            _run_skeletonize_tiled(self._args(tmp_path, input=str(bad)))
+
+    def test_negative_jobs_raises(self, tmp_path):
+        from vesskel.cli import _run_skeletonize_tiled
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        with pytest.raises(ValueError, match="--jobs"):
+            _run_skeletonize_tiled(self._args(tmp_path, jobs=-1))
+
+    def test_parser_accepts_the_subcommand(self):
+        from vesskel.cli import _make_parser
+
+        args = _make_parser().parse_args(
+            [
+                "skeletonize_tiled",
+                "--input",
+                "vol.npy",
+                "--out",
+                "work",
+                "--tile-shape",
+                "512",
+                "512",
+                "256",
+                "--halo",
+                "64",
+                "-j",
+                "4",
+            ]
+        )
+        assert args.command == "skeletonize_tiled"
+        assert args.tile_shape == [512, 512, 256]
+        assert args.halo == 64
+        assert args.jobs == 4
+        assert args.config is None
+
+    def test_main_dispatches_skeletonize_tiled(self, tmp_path, monkeypatch):
+        import sys
+
+        from vesskel.cli import main
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "vesskel",
+                "skeletonize_tiled",
+                "--input",
+                str(tmp_path / "vessels.npy"),
+                "--out",
+                str(tmp_path / "work"),
+                "--tile-shape",
+                "16",
+                "--halo",
+                "4",
+            ],
+        )
+        assert main() == 0
+        assert (tmp_path / "work" / "vessels_skeleton.npy").is_file()

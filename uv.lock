@@ -4128,6 +4128,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "skan" },
+    { name = "tifffile" },
 ]
 
 [package.optional-dependencies]
@@ -4172,6 +4173,7 @@ requires-dist = [
     { name = "seaborn", marker = "extra == 'notebooks'", specifier = ">=0.13.2" },
     { name = "skan", specifier = ">=0.13.1" },
     { name = "statsmodels", marker = "extra == 'notebooks'", specifier = ">=0.14.6" },
+    { name = "tifffile", specifier = ">=2026.1.10" },
 ]
 provides-extras = ["napari", "dev", "notebooks"]
 

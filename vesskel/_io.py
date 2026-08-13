@@ -21,6 +21,13 @@ def load_image(path: Path) -> np.ndarray:
         arr = np.load(path)
     elif suffix == ".mhd":
         arr = np.asarray(itk.imread(str(path)))
+    elif suffix in (".tif", ".tiff"):
+        # Use tifffile rather than PIL: PIL reads only the *first frame* of a
+        # multi-page/volumetric TIFF, silently turning a 3D stack into one
+        # slice. tifffile loads the full volume.
+        import tifffile
+
+        arr = tifffile.imread(str(path))
     else:
         with Image.open(path) as im:
             arr = np.asarray(im)
