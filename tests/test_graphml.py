@@ -169,3 +169,19 @@ class TestWriteGraphml:
             row, col = graph.coordinates[node_id, 0], graph.coordinates[node_id, 1]
             assert float(geom.get("y")) == row
             assert float(geom.get("x")) == col
+
+    def test_no_long_attribute_types(self, tmp_path, cross_graph, cross_skel):
+        """yEd fails to import GraphML attributes typed ``long``; plain Python
+        ints must be written as ``int`` instead (networkx's default for
+        numpy int32/64, but ``long`` for plain Python ``int``)."""
+        graph, branch_data = cross_graph
+        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path, radius_matrix=radius_matrix)
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        attr_types = {
+            key_el.get("attr.type") for key_el in tree.findall(".//g:key", ns)
+        }
+        assert "long" not in attr_types

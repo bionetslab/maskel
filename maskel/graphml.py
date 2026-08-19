@@ -38,9 +38,23 @@ def _is_missing(value: object) -> bool:
     return False
 
 
+def _as_graphml_value(value: object) -> object:
+    """Coerce plain Python ints to a fixed-width type.
+
+    networkx's GraphML writer maps plain Python ``int`` to the GraphML
+    ``long`` attribute type, which yEd fails to import. numpy integer types
+    (e.g. ``int32``) map to ``int`` instead, which yEd accepts.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return np.int32(value)
+    return value
+
+
 def _edge_attributes(row: dict[str, object]) -> dict[str, object]:
     return {
-        key: value
+        key: _as_graphml_value(value)
         for key, value in row.items()
         if not key.startswith("coord-")
         and not key.startswith("image-coord-")
@@ -84,8 +98,8 @@ def build_networkx_graph(
     for node_id in G.nodes():
         coords = graph.coordinates[node_id]
         degree = int(graph.degrees[node_id])
-        attrs = {f"coord_{d}": int(c) for d, c in enumerate(coords)}
-        attrs["degree"] = degree
+        attrs = {f"coord_{d}": _as_graphml_value(int(c)) for d, c in enumerate(coords)}
+        attrs["degree"] = _as_graphml_value(degree)
         attrs["is_endpoint"] = degree == 1
         attrs["is_junction"] = degree >= 3
         attrs["is_pass_through"] = degree == 2
