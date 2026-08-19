@@ -1,5 +1,7 @@
 """Tests for maskel.graphml GraphML export."""
 
+import xml.etree.ElementTree as ET
+
 import networkx as nx
 import numpy as np
 from skan import Skeleton
@@ -139,3 +141,31 @@ class TestWriteGraphml:
         G = nx.read_graphml(str(path), node_type=int)
         assert G.number_of_nodes() == 0
         assert G.number_of_edges() == 0
+
+    def test_yfiles_node_geometry_positions_nodes(self, tmp_path, cross_graph):
+        """Without yFiles geometry, yEd stacks every node at one spot and the
+        graph renders as a single square instead of the actual skeleton."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {
+            "g": "http://graphml.graphdrawing.org/xmlns",
+            "y": "http://www.yworks.com/xml/graphml",
+        }
+        geometries = {
+            int(node_el.get("id")): node_el.find(".//y:Geometry", ns)
+            for node_el in tree.findall(".//g:node", ns)
+        }
+        assert len(geometries) == _junction_endpoint_count(graph)
+        assert all(geom is not None for geom in geometries.values())
+
+        positions = {
+            (float(g.get("x")), float(g.get("y"))) for g in geometries.values()
+        }
+        assert len(positions) == len(geometries)  # nodes aren't stacked on each other
+        for node_id, geom in geometries.items():
+            row, col = graph.coordinates[node_id, 0], graph.coordinates[node_id, 1]
+            assert float(geom.get("y")) == row
+            assert float(geom.get("x")) == col

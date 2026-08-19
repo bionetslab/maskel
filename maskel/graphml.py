@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,15 @@ _EXCLUDED_COLUMNS = {
     "node-id-dst",
     "skeleton-id",
 }
+
+# Plain GraphML carries no layout information, so yEd places every node at
+# the same default position and they render as one overlapping square. This
+# namespace/key pair adds the yFiles visualization block yEd actually reads
+# for node placement and size.
+_GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
+_YFILES_NS = "http://www.yworks.com/xml/graphml"
+_YFILES_NODE_KEY = "yfiles_node_gfx"
+_DEFAULT_NODE_SIZE = 10.0
 
 
 def _is_missing(value: object) -> bool:
@@ -94,6 +104,65 @@ def build_networkx_graph(
     return G
 
 
+def _add_yfiles_geometry(G: nx.MultiGraph, path: Path) -> None:
+    """Inject yFiles node visualization data so yEd lays out nodes by position.
+
+    Reads back the file ``nx.write_graphml`` just wrote and adds a
+    ``y:ShapeNode``/``y:Geometry`` block per node, positioned from its
+    ``coord_*`` attributes (last two axes = row, col) and sized from
+    ``radius`` when present. Without this, yEd has no placement info and
+    stacks every node at the same spot, rendering as a single yellow square.
+    """
+    ET.register_namespace("", _GRAPHML_NS)
+    ET.register_namespace("y", _YFILES_NS)
+    tree = ET.parse(path)
+    root = tree.getroot()
+
+    key_el = ET.Element(
+        f"{{{_GRAPHML_NS}}}key",
+        {"for": "node", "id": _YFILES_NODE_KEY, "yfiles.type": "nodegraphics"},
+    )
+    root.insert(0, key_el)
+
+    graph_el = root.find(f"{{{_GRAPHML_NS}}}graph")
+    for node_el in graph_el.findall(f"{{{_GRAPHML_NS}}}node"):
+        node_id = int(node_el.get("id"))
+        attrs = G.nodes[node_id]
+        n_coords = sum(1 for k in attrs if k.startswith("coord_"))
+        y = attrs[f"coord_{n_coords - 2}"]
+        x = attrs[f"coord_{n_coords - 1}"]
+        size = (
+            max(2.0 * attrs["radius"], 4.0) if "radius" in attrs else _DEFAULT_NODE_SIZE
+        )
+
+        data_el = ET.SubElement(
+            node_el, f"{{{_GRAPHML_NS}}}data", {"key": _YFILES_NODE_KEY}
+        )
+        shape_el = ET.SubElement(data_el, f"{{{_YFILES_NS}}}ShapeNode")
+        ET.SubElement(
+            shape_el,
+            f"{{{_YFILES_NS}}}Geometry",
+            {
+                "height": f"{size:.2f}",
+                "width": f"{size:.2f}",
+                "x": f"{x:.2f}",
+                "y": f"{y:.2f}",
+            },
+        )
+        ET.SubElement(
+            shape_el,
+            f"{{{_YFILES_NS}}}Fill",
+            {"color": "#FFCC00", "transparent": "false"},
+        )
+        ET.SubElement(
+            shape_el,
+            f"{{{_YFILES_NS}}}BorderStyle",
+            {"color": "#000000", "type": "line", "width": "1.0"},
+        )
+
+    tree.write(path, xml_declaration=True, encoding="UTF-8")
+
+
 def write_graphml(
     graph: Skeleton,
     branch_data,
@@ -125,3 +194,5 @@ def write_graphml(
         radius_matrix=radius_matrix,
     )
     nx.write_graphml(G, str(path))
+    if G.number_of_nodes() > 0:
+        _add_yfiles_geometry(G, Path(path))
