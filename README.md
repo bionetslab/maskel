@@ -67,6 +67,9 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
     "vessel_radius": false,
     "junction_cleanup": false,
     "cleanup_threshold_factor": 2.5,
+    "prune_spurs": false,
+    "min_spur_length": 10.0,
+    "spur_iterations": 1,
     "closing_iterations": 0,
     "fill_holes": false,
     "max_hole_size": 0,
@@ -95,6 +98,9 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `extraction.vessel_radius` | bool | `false` | Estimate vessel radius using EDT from the segmentation |
 | `extraction.junction_cleanup` | bool | `false` | Clean up ambiguous junction pixels after thinning |
 | `extraction.cleanup_threshold_factor` | float | `2.5` | Sensitivity for junction cleanup (higher = larger cycles get collapsed) |
+| `extraction.prune_spurs` | bool | `false` | Remove short endpoint-to-junction branches (thinning spur artifacts) after skeletonization |
+| `extraction.min_spur_length` | float | `10.0` | Branches shorter than this (in pixels) qualify as spurs when `prune_spurs` is true |
+| `extraction.spur_iterations` | int | `1` | How often pruning is repeated on its own output, since removing a spur can expose new ones |
 | `extraction.closing_iterations` | int | `0` | Morphological closing iterations applied before thinning (0 = disabled) |
 | `extraction.fill_holes` | bool | `false` | Fill holes in the binary segmentation before thinning |
 | `extraction.max_hole_size` | int | `0` | Maximum hole area (px) to fill when `fill_holes` is true; 0 = fill all |

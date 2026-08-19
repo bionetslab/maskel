@@ -68,6 +68,9 @@ class VesselAnalysisWidget(Container):
             include_vessel_radius: bool = False,
             junction_cleanup: bool = False,
             cleanup_threshold_factor: float = 2.5,
+            prune_spurs: bool = False,
+            min_spur_length: float = 10.0,
+            spur_iterations: int = 1,
             fill_holes: bool = False,
             closing_iterations: int = 0,
             max_hole_size: int = 0,
@@ -105,6 +108,23 @@ class VesselAnalysisWidget(Container):
                 "min": 1.0,
                 "max": 10.0,
                 "step": 0.1,
+            },
+            prune_spurs={"annotation": bool, "value": False},
+            min_spur_length={
+                "annotation": float,
+                "value": 10.0,
+                "widget_type": "FloatSpinBox",
+                "min": 0.0,
+                "max": 1000.0,
+                "step": 1.0,
+            },
+            spur_iterations={
+                "annotation": int,
+                "value": 1,
+                "widget_type": "SpinBox",
+                "min": 1,
+                "max": 100,
+                "step": 1,
             },
             fill_holes={"annotation": bool, "value": False},
             closing_iterations={
@@ -231,6 +251,23 @@ class VesselAnalysisWidget(Container):
 
         self.junction_cleanup_widget.changed.connect(_on_junction_cleanup_toggle)
 
+        self.prune_spurs_widget = extraction_gui.prune_spurs
+        self.prune_spurs_widget.label = "Prune short spur branches"
+
+        self.min_spur_length_widget = extraction_gui.min_spur_length
+        self.min_spur_length_widget.label = "Min spur length (pixels)"
+        self.min_spur_length_widget.enabled = False
+
+        self.spur_iterations_widget = extraction_gui.spur_iterations
+        self.spur_iterations_widget.label = "Spur iterations"
+        self.spur_iterations_widget.enabled = False
+
+        def _on_prune_spurs_toggle(enabled: bool | None = None) -> None:
+            self.min_spur_length_widget.enabled = self.prune_spurs_widget.value
+            self.spur_iterations_widget.enabled = self.prune_spurs_widget.value
+
+        self.prune_spurs_widget.changed.connect(_on_prune_spurs_toggle)
+
         self.show_preprocessed_widget = extraction_gui.show_preprocessed
         self.show_preprocessed_widget.label = "Show preprocessed binary layer"
         self.show_preprocessed_widget.enabled = False
@@ -248,6 +285,9 @@ class VesselAnalysisWidget(Container):
         cleanup_group.append(self.closing_iterations_widget)
         cleanup_group.append(self.junction_cleanup_widget)
         cleanup_group.append(self.cleanup_threshold_widget)
+        cleanup_group.append(self.prune_spurs_widget)
+        cleanup_group.append(self.min_spur_length_widget)
+        cleanup_group.append(self.spur_iterations_widget)
         cleanup_group.append(self.show_preprocessed_widget)
 
         # ============================================================
@@ -393,6 +433,9 @@ class VesselAnalysisWidget(Container):
                 vessel_radius=self.include_vessel_radius_widget.value,
                 junction_cleanup=junction_cleanup,
                 cleanup_threshold_factor=self.cleanup_threshold_widget.value,
+                prune_spurs=self.prune_spurs_widget.value,
+                min_spur_length=self.min_spur_length_widget.value,
+                spur_iterations=self.spur_iterations_widget.value,
                 fill_holes=self.fill_holes_widget.value,
                 closing_iterations=self.closing_iterations_widget.value,
                 max_hole_size=self.max_hole_size_widget.value,
@@ -420,6 +463,9 @@ class VesselAnalysisWidget(Container):
         self.include_vessel_radius_widget.value = e.vessel_radius
         self.junction_cleanup_widget.value = e.junction_cleanup
         self.cleanup_threshold_widget.value = e.cleanup_threshold_factor
+        self.prune_spurs_widget.value = e.prune_spurs
+        self.min_spur_length_widget.value = e.min_spur_length
+        self.spur_iterations_widget.value = e.spur_iterations
         self.fill_holes_widget.value = e.fill_holes
         self.closing_iterations_widget.value = e.closing_iterations
         self.max_hole_size_widget.value = e.max_hole_size
