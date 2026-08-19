@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -28,20 +28,27 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class ObjectGraph:
-    """One object's skeleton graph, in that object's own local (crop) coordinates.
+class ObjectResult:
+    """Analysis outputs for one object, tagged and positioned in the full image.
 
-    Kept separate per object rather than merged into one graph, since objects
-    are skeletonized independently and touching-but-distinct objects must stay
-    topologically separate. *offset* is the crop's origin in the full image,
-    for callers that need to map ``graph``/``branch_data`` coordinates back to
-    global space (e.g. ``graph.path_coordinates(i) + offset``).
+    ``summary_features``/``branch_records``/``node_records`` are already
+    tagged with ``object_id`` (node coordinates already offset into the full
+    image). ``graph``/``branch_data``/``radius_matrix`` remain in this
+    object's own local (crop) coordinates - kept separate per object, rather
+    than merged into one graph, since objects are skeletonized independently
+    and touching-but-distinct objects must stay topologically separate.
+    *offset* is the crop's origin in the full image, for anything derived
+    from ``graph``/``branch_data`` that needs global coordinates (e.g.
+    ``graph.path_coordinates(i) + offset``).
     """
 
     object_id: int
     offset: tuple[int, ...]
-    graph: Skeleton
-    branch_data: DataFrame
+    summary_features: dict[str, float]
+    branch_records: list[dict[str, object]]
+    node_records: list[dict[str, object]]
+    graph: Skeleton | None = None
+    branch_data: DataFrame | None = None
     radius_matrix: np.ndarray | None = None
 
 
@@ -54,20 +61,32 @@ class AnalysisResult:
 
     An input with more than one distinct nonzero value is treated as an
     instance segmentation map (each value its own object); a plain binary
-    mask is treated as a single implicit object with id 1. Every list here
-    (``summary_features``, ``branch_records``, ``node_records``,
-    ``object_graphs``) carries one entry (or group of entries) per object,
-    tagged with that object's id. ``skeleton``/``radius_matrix``/
-    ``preprocessed_binary`` are stitched back to the full input shape.
+    mask is treated as a single implicit object with id 1. ``objects`` has
+    one entry per object; ``skeleton``/``radius_matrix``/
+    ``preprocessed_binary`` are stitched back to the full input shape, since
+    (unlike per-object lists) that stitching is real work only worth doing
+    once, centrally, regardless of how many consumers want a full-image view.
     """
 
     skeleton: np.ndarray
-    summary_features: list[dict[str, float]]
-    branch_records: list[dict[str, object]]
-    node_records: list[dict[str, object]]
-    object_graphs: list[ObjectGraph] = field(default_factory=list)
+    objects: list[ObjectResult]
     radius_matrix: np.ndarray | None = None
     preprocessed_binary: np.ndarray | None = None
+
+    @property
+    def summary_features(self) -> list[dict[str, float]]:
+        """One dict per object that has any (empty when summary is disabled)."""
+        return [obj.summary_features for obj in self.objects if obj.summary_features]
+
+    @property
+    def branch_records(self) -> list[dict[str, object]]:
+        """All objects' branch records, flattened."""
+        return [record for obj in self.objects for record in obj.branch_records]
+
+    @property
+    def node_records(self) -> list[dict[str, object]]:
+        """All objects' node records, flattened."""
+        return [record for obj in self.objects for record in obj.node_records]
 
 
 def preprocess_binary(
@@ -119,9 +138,9 @@ def preprocess_binary(
 
 
 def _iter_object_crops(
-    image: np.ndarray,
+    mask: np.ndarray,
 ) -> list[tuple[int, tuple[slice, ...], np.ndarray]]:
-    """Split an input mask into per-object, bounding-box-cropped binary arrays.
+    """Split a segmentation mask into per-object, bounding-box-cropped binary arrays.
 
     A plain binary mask (at most one distinct nonzero value) is treated as a
     single implicit object with id 1. A mask with more than one distinct
@@ -137,14 +156,14 @@ def _iter_object_crops(
     Returns
     -------
     list of (object_id, bbox, binary_crop)
-        *bbox* is a tuple of slices into *image* (the padded bounding box).
+        *bbox* is a tuple of slices into *mask* (the padded bounding box).
         *binary_crop* is the object's mask within *bbox*, as a uint8 array.
 
     Notes
     -----
-    Costs that scale with the *whole* image rather than each object's own
+    Costs that scale with the *whole* mask rather than each object's own
     crop are kept to the minimum needed to find object bounding boxes: one
-    ``ndi.find_objects`` pass, and a dtype cast only when *image* isn't
+    ``ndi.find_objects`` pass, and a dtype cast only when *mask* isn't
     already an integer array. In particular this avoids ``np.unique``
     (which would sort every foreground pixel's value) purely to tell a
     plain binary mask apart from a labeled one - a mask with exactly one
@@ -152,10 +171,10 @@ def _iter_object_crops(
     foreground value, so the same ``find_objects`` pass answers both
     questions at once.
     """
-    if not image.any():
+    if not mask.any():
         return []
 
-    labels = image if np.issubdtype(image.dtype, np.integer) else image.astype(np.int64)
+    labels = mask if np.issubdtype(mask.dtype, np.integer) else mask.astype(np.int64)
     bboxes = ndi.find_objects(labels)
     raw_ids = [i + 1 for i, bbox in enumerate(bboxes) if bbox is not None]
 
@@ -169,7 +188,7 @@ def _iter_object_crops(
         bbox = bboxes[raw_id - 1]
         padded = tuple(
             slice(max(s.start - 1, 0), min(s.stop + 1, dim))
-            for s, dim in zip(bbox, image.shape, strict=True)
+            for s, dim in zip(bbox, mask.shape, strict=True)
         )
         binary_crop = (labels[padded] == raw_id).astype(np.uint8)
         crops.append((object_id, padded, binary_crop))
@@ -179,7 +198,10 @@ def _iter_object_crops(
 
 @dataclass
 class _ObjectResult:
-    """Analysis outputs for a single already-cropped, already-binary object."""
+    """Analysis outputs for a single already-cropped, already-binary object,
+    in that crop's own local coordinates and not yet tagged with an object id
+    - see ``ObjectResult`` for the packaged, positioned, public equivalent.
+    """
 
     skeleton: np.ndarray
     summary_features: dict[str, float]
@@ -327,34 +349,34 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
     )
 
 
-def analyze_binary_image(image: np.ndarray, config: PipelineConfig) -> AnalysisResult:
-    """Run the full skeletonization + extraction pipeline for one image.
+def analyze_segmentation_mask(
+    mask: np.ndarray, config: PipelineConfig
+) -> AnalysisResult:
+    """Run the full skeletonization + extraction pipeline for one segmentation mask.
 
     Accepts either a plain binary segmentation mask or a multi-object
     instance segmentation map (more than one distinct nonzero value). Each
     object is cropped to its own (padded) bounding box and processed fully
     independently - this is a performance optimization for binary input, and
     is what correctly separates touching-but-distinct objects for labeled
-    input, rather than merging them into one skeleton. Every branch/node
-    record and every summary-features row is tagged with the object id it
-    came from (``1`` for a plain binary mask).
+    input, rather than merging them into one skeleton. Every object's
+    records are tagged with the object id it came from (``1`` for a plain
+    binary mask; see ``AnalysisResult``/``ObjectResult``).
 
     Parameters
     ----------
-    image : ndarray
-        Input mask. Non-zero values are treated as foreground; see above for
-        how multiple distinct nonzero values are interpreted.
+    mask : ndarray
+        Input segmentation mask. Non-zero values are treated as foreground;
+        see above for how multiple distinct nonzero values are interpreted.
     config : PipelineConfig
         Full pipeline configuration.
     """
-    object_crops = _iter_object_crops(image)
+    object_crops = _iter_object_crops(mask)
 
     if not object_crops:
         return AnalysisResult(
-            skeleton=np.zeros(image.shape, dtype=np.uint8),
-            summary_features=[],
-            branch_records=[],
-            node_records=[],
+            skeleton=np.zeros(mask.shape, dtype=np.uint8),
+            objects=[],
         )
 
     want_radius = config.extraction.vessel_radius
@@ -362,18 +384,15 @@ def analyze_binary_image(image: np.ndarray, config: PipelineConfig) -> AnalysisR
         config.extraction.closing_iterations > 0 or config.extraction.fill_holes
     )
 
-    full_skeleton = np.zeros(image.shape, dtype=np.uint8)
-    full_radius = np.zeros(image.shape, dtype=np.float64) if want_radius else None
+    full_skeleton = np.zeros(mask.shape, dtype=np.uint8)
+    full_radius = np.zeros(mask.shape, dtype=np.float64) if want_radius else None
     full_preprocessed = (
-        np.zeros(image.shape, dtype=np.uint8) if want_preprocessed else None
+        np.zeros(mask.shape, dtype=np.uint8) if want_preprocessed else None
     )
 
-    summary_features: list[dict[str, float]] = []
-    branch_records: list[dict[str, object]] = []
-    node_records: list[dict[str, object]] = []
-    object_graphs: list[ObjectGraph] = []
+    ndim = mask.ndim
+    objects: list[ObjectResult] = []
 
-    ndim = image.ndim
     for object_id, bbox, crop in object_crops:
         obj = _analyze_single_object(crop, config)
         offset = tuple(s.start for s in bbox)
@@ -386,12 +405,17 @@ def analyze_binary_image(image: np.ndarray, config: PipelineConfig) -> AnalysisR
                 full_preprocessed[bbox], obj.preprocessed_binary
             )
 
-        if config.extraction.summary:
-            summary_features.append({**obj.summary_features, "object_id": object_id})
+        summary_features = (
+            {**obj.summary_features, "object_id": object_id}
+            if config.extraction.summary
+            else {}
+        )
 
-        for record in obj.branch_records:
-            branch_records.append({**record, "object_id": object_id})
+        branch_records = [
+            {**record, "object_id": object_id} for record in obj.branch_records
+        ]
 
+        node_records = []
         for record in obj.node_records:
             record = dict(record)
             for d in range(ndim):
@@ -399,23 +423,22 @@ def analyze_binary_image(image: np.ndarray, config: PipelineConfig) -> AnalysisR
             record["object_id"] = object_id
             node_records.append(record)
 
-        if obj.graph is not None and obj.branch_data is not None:
-            object_graphs.append(
-                ObjectGraph(
-                    object_id=object_id,
-                    offset=offset,
-                    graph=obj.graph,
-                    branch_data=obj.branch_data,
-                    radius_matrix=obj.radius_matrix,
-                )
+        objects.append(
+            ObjectResult(
+                object_id=object_id,
+                offset=offset,
+                summary_features=summary_features,
+                branch_records=branch_records,
+                node_records=node_records,
+                graph=obj.graph,
+                branch_data=obj.branch_data,
+                radius_matrix=obj.radius_matrix,
             )
+        )
 
     return AnalysisResult(
         skeleton=full_skeleton,
-        summary_features=summary_features,
-        branch_records=branch_records,
-        node_records=node_records,
-        object_graphs=object_graphs,
+        objects=objects,
         radius_matrix=full_radius,
         preprocessed_binary=full_preprocessed,
     )

@@ -8,7 +8,7 @@ from skan import Skeleton, summarize
 
 from maskel._io import save_analysis_outputs
 from maskel.config import OutputConfig
-from maskel.pipeline import AnalysisResult, ObjectGraph
+from maskel.pipeline import AnalysisResult, ObjectResult
 
 
 class TestSaveAnalysisOutputs:
@@ -24,16 +24,28 @@ class TestSaveAnalysisOutputs:
     ) -> AnalysisResult:
         skel = np.eye(10, dtype=np.uint8)
         feat = (
-            [{"n_branches": 4.0, "n_junctions": 1.0, "object_id": 1}] if summary else []
+            {"n_branches": 4.0, "n_junctions": 1.0, "object_id": 1} if summary else {}
         )
         rad = np.ones((10, 10), dtype=np.float64) if radius else None
-        brecs = [{"id": i, "len": float(i * 2)} for i in range(2)] if branches else []
-        nrecs = [{"id": i, "deg": i + 2} for i in range(2)] if nodes else []
+        brecs = (
+            [{"id": i, "len": float(i * 2), "object_id": 1} for i in range(2)]
+            if branches
+            else []
+        )
+        nrecs = (
+            [{"id": i, "deg": i + 2, "object_id": 1} for i in range(2)] if nodes else []
+        )
         return AnalysisResult(
             skeleton=skel,
-            summary_features=feat,
-            branch_records=brecs,
-            node_records=nrecs,
+            objects=[
+                ObjectResult(
+                    object_id=1,
+                    offset=(0, 0),
+                    summary_features=feat,
+                    branch_records=brecs,
+                    node_records=nrecs,
+                )
+            ],
             radius_matrix=rad,
         )
 
@@ -71,9 +83,7 @@ class TestSaveAnalysisOutputs:
     def test_3d_skeleton_with_png_raises(self, tmp_path):
         result = AnalysisResult(
             skeleton=np.ones((4, 4, 4), dtype=np.uint8),
-            summary_features=[],
-            branch_records=[],
-            node_records=[],
+            objects=[],
         )
         cfg = OutputConfig(write_skeleton_npy=False, write_skeleton_png=True)
         with pytest.raises(ValueError, match="PNG skeleton output"):
@@ -231,13 +241,16 @@ class TestSaveAnalysisOutputs:
         branch_data = summarize(graph, separator="-")
         return AnalysisResult(
             skeleton=cross_skel,
-            summary_features=[{"num_nodes": float(len(branch_data)), "object_id": 1}],
-            branch_records=[],
-            node_records=[],
-            object_graphs=[
-                ObjectGraph(
+            objects=[
+                ObjectResult(
                     object_id=1,
                     offset=(0, 0),
+                    summary_features={
+                        "num_nodes": float(len(branch_data)),
+                        "object_id": 1,
+                    },
+                    branch_records=[],
+                    node_records=[],
                     graph=graph,
                     branch_data=branch_data,
                 )

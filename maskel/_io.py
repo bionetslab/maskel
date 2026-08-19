@@ -115,17 +115,16 @@ def save_analysis_outputs(
     if config.write_radius and result.radius_matrix is not None:
         save_radius(out / f"{base_name}_radius", result.radius_matrix)
 
-    if config.write_graphml and result.object_graphs:
-        summary_by_object = {
-            row.get("object_id"): row for row in result.summary_features
-        }
-        for og in result.object_graphs:
+    if config.write_graphml:
+        for obj in result.objects:
+            if obj.graph is None or obj.branch_data is None:
+                continue
             write_graphml(
-                og.graph,
-                og.branch_data,
-                out / f"{base_name}_{og.object_id}_graph.graphml",
-                summary_features=summary_by_object.get(og.object_id),
-                radius_matrix=og.radius_matrix,
+                obj.graph,
+                obj.branch_data,
+                out / f"{base_name}_{obj.object_id}_graph.graphml",
+                summary_features=obj.summary_features or None,
+                radius_matrix=obj.radius_matrix,
             )
 
     if config.write_branch_csv and result.branch_records:
