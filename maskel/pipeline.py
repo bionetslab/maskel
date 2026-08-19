@@ -9,7 +9,6 @@ import numpy as np
 from scipy import ndimage as ndi
 from skan import summarize
 
-from maskel._utils import to_binary
 from maskel.config import PipelineConfig
 from maskel.features import (
     build_vessel_graph,
@@ -139,30 +138,40 @@ def _iter_object_crops(
     -------
     list of (object_id, bbox, binary_crop)
         *bbox* is a tuple of slices into *image* (the padded bounding box).
-        *binary_crop* is ``image[bbox] == object_id`` as a uint8 array.
+        *binary_crop* is the object's mask within *bbox*, as a uint8 array.
+
+    Notes
+    -----
+    Costs that scale with the *whole* image rather than each object's own
+    crop are kept to the minimum needed to find object bounding boxes: one
+    ``ndi.find_objects`` pass, and a dtype cast only when *image* isn't
+    already an integer array. In particular this avoids ``np.unique``
+    (which would sort every foreground pixel's value) purely to tell a
+    plain binary mask apart from a labeled one - a mask with exactly one
+    surviving object *is* that binary-mask case, whatever its raw
+    foreground value, so the same ``find_objects`` pass answers both
+    questions at once.
     """
-    nonzero = image[image != 0]
-    if nonzero.size == 0:
+    if not image.any():
         return []
 
-    distinct = np.unique(nonzero)
-    if distinct.size == 1:
-        labels = to_binary(image)
-        object_ids = [1]
-    else:
-        labels = image.astype(np.int64)
-        object_ids = [int(v) for v in distinct]
-
+    labels = image if np.issubdtype(image.dtype, np.integer) else image.astype(np.int64)
     bboxes = ndi.find_objects(labels)
+    raw_ids = [i + 1 for i, bbox in enumerate(bboxes) if bbox is not None]
+
+    # A mask with only one object - including a plain binary mask, whatever
+    # its raw foreground value - is reported as object id 1; a genuine
+    # multi-object instance segmentation keeps each object's own label value.
+    report_ids = [1] if len(raw_ids) == 1 else raw_ids
 
     crops = []
-    for object_id in object_ids:
-        bbox = bboxes[object_id - 1]
+    for raw_id, object_id in zip(raw_ids, report_ids, strict=True):
+        bbox = bboxes[raw_id - 1]
         padded = tuple(
             slice(max(s.start - 1, 0), min(s.stop + 1, dim))
             for s, dim in zip(bbox, image.shape, strict=True)
         )
-        binary_crop = (labels[padded] == object_id).astype(np.uint8)
+        binary_crop = (labels[padded] == raw_id).astype(np.uint8)
         crops.append((object_id, padded, binary_crop))
 
     return crops
