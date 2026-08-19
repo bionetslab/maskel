@@ -1,46 +1,29 @@
-# VesSkel
+# Maskel
 
-[![DOI](https://zenodo.org/badge/1198768258.svg)](https://doi.org/10.5281/zenodo.21550587)
-[![PyPI version](https://img.shields.io/pypi/v/vesskel.svg)](https://pypi.org/project/vesskel/)
+[![PyPI version](https://img.shields.io/pypi/v/maskel.svg)](https://pypi.org/project/maskel/)
 [![Python version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Vessel Skeletonization and Graph-Based Phenotype Analysis in Retinal Fundus Images
+Vessel Skeletonization and Graph-Based Phenotype Analysis in Retinal Fundus Images and other tubular structures.
 
-## Demo
-
-<video src="https://github.com/user-attachments/assets/8c0febe4-5428-451e-847b-e9210ec0f06b" controls width="1920"></video>
-
-A quick look at what VesSkel can do: initialize a config file with the CLI, load it in the napari plugin to analyze a single example image, then batch-process the whole HRF dataset with the CLI. In practice you'd tweak the extraction settings in napari and save the config back out before batch-processing.
+Maskel is the core algorithm package: thinning, feature extraction, and the batch CLI. For the napari plugin, see [napari-maskel](https://github.com/bionetslab/napari-maskel). For benchmarks and the HRF-based analysis notebooks, see [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations).
 
 ## Installation
 
 ```sh
 uv sync                  # core only
 uv sync --extra dev      # + test tools
-uv sync --extra napari   # + napari GUI
-uv sync --all-extras     # everything
 ```
-
-## Napari
-
-```sh
-uv sync --extra napari && napari
-```
-
-Open a `manual1` TIFF from the HRF folder, then run **Lee94 Thinning** from the VesSkel plugin menu to see the skeleton.
-
-Inside the **Analyze Vessels** widget, tune extraction settings and use **Save Config** to export a reusable JSON preset.
 
 ## CLI
 
-Use the same JSON preset exported from napari to batch-process images.
-
 ```sh
-vesskel init config.json
-vesskel validate config.json
-vesskel run --input HRF/manual1 --config config.json --out outputs
+maskel init config.json
+maskel validate config.json
+maskel run --input /path/to/images --config config.json --out outputs
 ```
+
+A config JSON can also be exported from the [napari-maskel](https://github.com/bionetslab/napari-maskel) plugin's **Save Config** button and used here directly — both consume the same schema (see below).
 
 CLI outputs:
 
@@ -117,13 +100,13 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 
 ```sh
 # zsh
-eval "$(vesskel completions zsh)"
+eval "$(maskel completions zsh)"
 
 # bash
-eval "$(vesskel completions bash)"
+eval "$(maskel completions bash)"
 
 # PowerShell
-vesskel completions powershell | Out-String | Invoke-Expression
+maskel completions powershell | Out-String | Invoke-Expression
 ```
 
 Add the appropriate line to your shell rc for persistent tab-completion.
@@ -135,40 +118,13 @@ uv sync --extra dev && pytest                     # all tests
 uv sync --extra dev && pytest -m "not slow"       # skip regression tests
 ```
 
-- **2D regression** - thinning + feature extraction on all 45 HRF samples, compared against saved baselines
-- **3D regression** - thinning + features on a brain volume (from scikit-image), same baseline approach
-- **3D comparison** - vesskel `lee94_thin` vs `skimage.morphology.skeletonize` on the brain volume, asserting identical output
+- **3D regression** - thinning + features on a brain volume (from scikit-image), compared against saved baselines
+- **3D comparison** - maskel `lee94_thin` vs `skimage.morphology.skeletonize` on the brain volume, asserting identical output
 
 First run (or `--update-baseline`) generates baselines in `tests/skeletons/` and `tests/features/`.
 
-## Dataset
-
-This project uses the High-Resolution Fundus (HRF) Image Database, established by a collaborative research group to support comparative studies on automatic segmentation algorithms on retinal fundus images.
-
-The database contains 45 images total:
-
-- 15 images of healthy patients
-- 15 images of patients with diabetic retinopathy
-- 15 images of glaucomatous patients
-
-Binary gold standard vessel segmentation images and field of view (FOV) masks are available for each image.
-
-### License
-
-> Budai, Attila; Bock, Rüdiger; Maier, Andreas; Hornegger, Joachim; Michelson, Georg.
-> Robust Vessel Segmentation in Fundus Images.
-> International Journal of Biomedical Imaging, vol. 2013, 2013
-
-The HRF dataset is released under the **Creative Commons 4.0 Attribution License**.
-
-For more information, visit the [HRF Image Database](https://www5.cs.fau.de/research/data/fundus-images/).
-
-## Citation
-
-If you use VesSkel in your research, please cite the Zenodo release:
-
-> Wittmann, S. (2026). 404Simon/VesSkel: 5.1.0 (Version 5.1.0) [Computer software]. Zenodo. <https://doi.org/10.5281/zenodo.21550587>
+Real-data regression tests against the HRF dataset (2D thinning + feature extraction on all 45 samples) live in [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations), since they depend on that external dataset.
 
 ## License
 
-VesSkel is released under the **MIT License**. See [LICENSE](LICENSE) for details.
+Maskel is released under the **MIT License**. See [LICENSE](LICENSE) for details.

@@ -1,4 +1,4 @@
-"""Tests for vesskel._io."""
+"""Tests for maskel._io."""
 
 import csv
 
@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from skan import Skeleton, summarize
 
-from vesskel._io import save_analysis_outputs
-from vesskel.config import OutputConfig
-from vesskel.pipeline import AnalysisResult
+from maskel._io import save_analysis_outputs
+from maskel.config import OutputConfig
+from maskel.pipeline import AnalysisResult
 
 
 class TestSaveAnalysisOutputs:
@@ -29,7 +29,6 @@ class TestSaveAnalysisOutputs:
         nrecs = [{"id": i, "deg": i + 2} for i in range(2)] if nodes else []
         return AnalysisResult(
             skeleton=skel,
-            layers=[],
             summary_features=feat,
             branch_records=brecs,
             node_records=nrecs,
@@ -70,7 +69,6 @@ class TestSaveAnalysisOutputs:
     def test_3d_skeleton_with_png_raises(self, tmp_path):
         result = AnalysisResult(
             skeleton=np.ones((4, 4, 4), dtype=np.uint8),
-            layers=[],
             summary_features={},
             branch_records=[],
             node_records=[],
@@ -230,7 +228,6 @@ class TestSaveAnalysisOutputs:
         branch_data = summarize(graph, separator="-")
         return AnalysisResult(
             skeleton=cross_skel,
-            layers=[],
             summary_features={"num_nodes": float(len(branch_data))},
             branch_records=[],
             node_records=[],

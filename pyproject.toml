@@ -1,7 +1,7 @@
 [project]
-name = "vesskel"
+name = "maskel"
 license = "MIT"
-version = "5.2.0"
+version = "0.1.0"
 description = "2D and 3D Skeletonization and Graph-based Analysis"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -18,19 +18,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/404Simon/VesSkel"
-Repository = "https://github.com/404Simon/VesSkel"
-Documentation = "https://github.com/404Simon/VesSkel#readme"
-Changelog = "https://github.com/404Simon/VesSkel/releases"
+Homepage = "https://github.com/bionetslab/maskel"
+Repository = "https://github.com/bionetslab/maskel"
+Documentation = "https://github.com/bionetslab/maskel#readme"
+Changelog = "https://github.com/bionetslab/maskel/releases"
 
 [project.optional-dependencies]
-napari = [
-    "napari[all]",
-    "napari-assistant>=0.6.0",
-    "napari-simpleitk-image-processing>=0.4.9",
-    "napari-skimage>=0.6.0",
-]
-
 dev = [
     "pytest>=9.0.2",
     "pooch>=1.9.0",
@@ -38,27 +31,15 @@ dev = [
     "nibabel>=5.4.2",
 ]
 
-notebooks = [
-    "seaborn>=0.13.2",
-    "statsmodels>=0.14.6",
-    "scikit-learn>=1.8.0",
-]
-
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["vesskel*"]
-
-[tool.setuptools.package-data]
-vesskel = ["napari.yaml"]
-
-[project.entry-points."napari.manifest"]
-vesskel = "vesskel:napari.yaml"
+include = ["maskel*"]
 
 [project.scripts]
-vesskel = "vesskel.cli:main"
+maskel = "maskel.cli:main"
 
 [tool.pytest.ini_options]
 markers = ["slow: big regression tests (skip with -m 'not slow')"]

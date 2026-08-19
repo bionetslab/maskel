@@ -6,18 +6,18 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vesskel._io import (
+from maskel._io import (
     load_image,
     sanitize_for_csv,
     save_radius,
     save_skeleton,
     write_csv,
 )
-from vesskel.cli import _discover_input_paths
-from vesskel.config import CONFIG_SCHEMA_VERSION, PipelineConfig
+from maskel.cli import _discover_input_paths
+from maskel.config import CONFIG_SCHEMA_VERSION, PipelineConfig
 
 HEAVY_MODULES = frozenset(
-    {"numpy", "PIL", "PIL.Image", "vesskel.pipeline", "vesskel._batch", "vesskel._io"}
+    {"numpy", "PIL", "PIL.Image", "maskel.pipeline", "maskel._batch", "maskel._io"}
 )
 
 
@@ -37,10 +37,10 @@ def _fake_exit(code=0):
 os._exit = _fake_exit
 
 os.environ["_ARGCOMPLETE"] = "1"
-sys.argv = ["vesskel", "complete", "zsh"]
+sys.argv = ["maskel", "complete", "zsh"]
 
 try:
-    import vesskel.cli
+    import maskel.cli
 except SystemExit:
     pass
 
@@ -284,7 +284,7 @@ def _make_args(**kwargs):
 
 class TestMainCommands:
     def test_config_init_creates_valid_json(self, tmp_path):
-        from vesskel.cli import _config_init
+        from maskel.cli import _config_init
 
         args = _make_args(out=str(tmp_path / "config.json"))
         exit_code = _config_init(args)
@@ -297,7 +297,7 @@ class TestMainCommands:
         assert "output" in data
 
     def test_validate_config_succeeds(self, tmp_path):
-        from vesskel.cli import _validate_config
+        from maskel.cli import _validate_config
 
         config_path = tmp_path / "cfg.json"
         config = PipelineConfig.from_dict(
@@ -310,7 +310,7 @@ class TestMainCommands:
         assert exit_code == 0
 
     def test_run_batch_processes_single_image(self, tmp_path):
-        from vesskel.cli import _run_batch
+        from maskel.cli import _run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -345,7 +345,7 @@ class TestMainCommands:
         assert (out_dir / "summary.csv").exists()
 
     def test_run_batch_no_input_files_raises(self, tmp_path):
-        from vesskel.cli import _run_batch
+        from maskel.cli import _run_batch
 
         config_path = tmp_path / "cfg.json"
         config = PipelineConfig.from_dict(
@@ -366,7 +366,7 @@ class TestMainCommands:
             _run_batch(args)
 
     def test_run_batch_parallel_multiple_images(self, tmp_path):
-        from vesskel.cli import _run_batch
+        from maskel.cli import _run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -406,7 +406,7 @@ class TestMainCommands:
         assert len(data) == 2
 
     def test_run_batch_parallel_failure_raises(self, tmp_path):
-        from vesskel.cli import _run_batch
+        from maskel.cli import _run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -436,7 +436,7 @@ class TestMainCommands:
             _run_batch(args)
 
     def test_run_batch_jobs_zero_auto_detect(self, tmp_path):
-        from vesskel.cli import _run_batch
+        from maskel.cli import _run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -468,11 +468,9 @@ class TestMainCommands:
     def test_main_dispatch_config_init(self, tmp_path, monkeypatch):
         import sys
 
-        from vesskel.cli import main
+        from maskel.cli import main
 
-        monkeypatch.setattr(
-            sys, "argv", ["vesskel", "init", str(tmp_path / "cfg.json")]
-        )
+        monkeypatch.setattr(sys, "argv", ["maskel", "init", str(tmp_path / "cfg.json")])
         exit_code = main()
         assert exit_code == 0
         assert (tmp_path / "cfg.json").exists()
@@ -480,31 +478,31 @@ class TestMainCommands:
     def test_version_flag(self, capsys, monkeypatch):
         import sys
 
-        from vesskel.cli import main
+        from maskel.cli import main
 
-        monkeypatch.setattr(sys, "argv", ["vesskel", "--version"])
+        monkeypatch.setattr(sys, "argv", ["maskel", "--version"])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 0
         captured = capsys.readouterr()
-        assert "vesskel" in captured.out
+        assert "maskel" in captured.out
 
     def test_version_short_flag(self, capsys, monkeypatch):
         import sys
 
-        from vesskel.cli import main
+        from maskel.cli import main
 
-        monkeypatch.setattr(sys, "argv", ["vesskel", "-v"])
+        monkeypatch.setattr(sys, "argv", ["maskel", "-v"])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 0
         captured = capsys.readouterr()
-        assert "vesskel" in captured.out
+        assert "maskel" in captured.out
 
     def test_main_dispatch_validate_config(self, tmp_path, monkeypatch):
         import sys
 
-        from vesskel.cli import main
+        from maskel.cli import main
 
         config_path = tmp_path / "cfg.json"
         config = PipelineConfig.from_dict(
@@ -512,6 +510,6 @@ class TestMainCommands:
         )
         config_path.write_text(json.dumps(config.to_dict(), indent=2))
 
-        monkeypatch.setattr(sys, "argv", ["vesskel", "validate", str(config_path)])
+        monkeypatch.setattr(sys, "argv", ["maskel", "validate", str(config_path)])
         exit_code = main()
         assert exit_code == 0

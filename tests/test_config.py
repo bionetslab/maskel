@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from vesskel.config import (
+from maskel.config import (
     CONFIG_SCHEMA_VERSION,
     ExtractionConfig,
     OutputConfig,

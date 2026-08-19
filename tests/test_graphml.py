@@ -1,10 +1,10 @@
-"""Tests for vesskel.graphml GraphML export."""
+"""Tests for maskel.graphml GraphML export."""
 
 import networkx as nx
 import numpy as np
 from skan import Skeleton
 
-from vesskel.graphml import build_networkx_graph, write_graphml
+from maskel.graphml import build_networkx_graph, write_graphml
 
 
 def _junction_endpoint_count(graph: Skeleton) -> int:

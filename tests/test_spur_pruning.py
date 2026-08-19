@@ -1,8 +1,8 @@
 import numpy as np
 from skan import summarize
 
-from vesskel.features import build_vessel_graph
-from vesskel.spur_pruning import prune_short_spurs
+from maskel.features import build_vessel_graph
+from maskel.spur_pruning import prune_short_spurs
 
 
 class TestPruneShortSpurs:

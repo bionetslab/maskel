@@ -1,7 +1,7 @@
 import numpy as np
 
-from vesskel.config import ExtractionConfig, OutputConfig, PipelineConfig
-from vesskel.pipeline import analyze_binary_image
+from maskel.config import ExtractionConfig, OutputConfig, PipelineConfig
+from maskel.pipeline import analyze_binary_image
 
 
 class TestClosing:
@@ -14,7 +14,7 @@ class TestClosing:
             extraction=ExtractionConfig(closing_iterations=1),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(gap, "gap", config)
+        result = analyze_binary_image(gap, config)
         # closing bridges the 1px gap at column 7 in the 3px-thick line
         assert result.skeleton[7:10, 7].any()
 
@@ -27,7 +27,7 @@ class TestClosing:
             extraction=ExtractionConfig(closing_iterations=1),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(block, "block", config)
+        result = analyze_binary_image(block, config)
         # the 1px gap at column 7 should be bridged before thinning
         assert result.skeleton[6:10, 7].any()
 
@@ -40,7 +40,7 @@ class TestClosing:
             extraction=ExtractionConfig(closing_iterations=0),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(gap, "gap", config)
+        result = analyze_binary_image(gap, config)
         # without closing the gap remains
         assert not result.skeleton[7:10, 7].any()
 
@@ -58,7 +58,7 @@ class TestFillHoles:
             extraction=ExtractionConfig(fill_holes=True),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(ring, "ring", config)
+        result = analyze_binary_image(ring, config)
         # preprocessed_binary should have the hole filled
         assert result.preprocessed_binary is not None
         assert result.preprocessed_binary[7:9, 7:9].all()
@@ -77,7 +77,7 @@ class TestMaxHoleSize:
             extraction=ExtractionConfig(fill_holes=True, max_hole_size=50),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(ring, "ring", config)
+        result = analyze_binary_image(ring, config)
         # 15x15 = 225 pixels, above threshold, so preprocessed binary keeps it as a hole
         assert result.preprocessed_binary is not None
         assert not result.preprocessed_binary[9:23, 9:23].any()
@@ -94,7 +94,7 @@ class TestMaxHoleSize:
             extraction=ExtractionConfig(fill_holes=True, max_hole_size=50),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(ring, "ring", config)
+        result = analyze_binary_image(ring, config)
         # 2x2 = 4 pixels, under threshold, so filled in preprocessed
         assert result.preprocessed_binary is not None
         assert result.preprocessed_binary[7:9, 7:9].all()
@@ -111,7 +111,7 @@ class TestMaxHoleSize:
             extraction=ExtractionConfig(fill_holes=True, max_hole_size=0),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(ring, "ring", config)
+        result = analyze_binary_image(ring, config)
         # zero = unlimited, so 4x4 hole gets filled
         assert result.preprocessed_binary is not None
         assert result.preprocessed_binary[8:10, 8:10].all()
@@ -125,7 +125,7 @@ class TestPreprocessedBinary:
             extraction=ExtractionConfig(closing_iterations=1),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(img, "test", config)
+        result = analyze_binary_image(img, config)
         assert result.preprocessed_binary is not None
         assert result.preprocessed_binary.shape == img.shape
 
@@ -140,7 +140,7 @@ class TestPreprocessedBinary:
             extraction=ExtractionConfig(fill_holes=True),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(ring, "test", config)
+        result = analyze_binary_image(ring, config)
         assert result.preprocessed_binary is not None
 
     def test_none_when_preprocessing_disabled(self):
@@ -150,7 +150,7 @@ class TestPreprocessedBinary:
             extraction=ExtractionConfig(),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(img, "test", config)
+        result = analyze_binary_image(img, config)
         assert result.preprocessed_binary is None
 
     def test_none_when_show_preprocessed_checked_but_no_preprocessing(self):
@@ -160,5 +160,5 @@ class TestPreprocessedBinary:
             extraction=ExtractionConfig(show_preprocessed=True),
             output=OutputConfig(),
         )
-        result = analyze_binary_image(img, "test", config)
+        result = analyze_binary_image(img, config)
         assert result.preprocessed_binary is None

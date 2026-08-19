@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from skan import Skeleton, summarize
 
-from vesskel.features import (
+from maskel.features import (
     _EMPTY_FEATURES,
     build_vessel_graph,
     compute_radii,

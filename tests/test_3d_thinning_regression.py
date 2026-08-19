@@ -5,8 +5,8 @@ import pytest
 from skan import summarize
 from skimage import data
 
-from vesskel.features import build_vessel_graph, compute_radii, extract_vessel_features
-from vesskel.thin import lee94_thin
+from maskel.features import build_vessel_graph, compute_radii, extract_vessel_features
+from maskel.thin import lee94_thin
 
 from ._helpers import (
     BASELINE_DIR,
