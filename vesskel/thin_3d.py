@@ -25,6 +25,13 @@ References
 import numpy as np
 from numba import njit, prange
 
+# _compute_thin_image stores candidate voxel coordinates as uint16 to keep its
+# scratch buffers small.  Those coordinates index the one-voxel-padded volume
+# and reach ``dim`` for an input axis of length ``dim``, so every axis has to
+# fit in a uint16.  Numba would wrap silently past that, hence the explicit
+# check in thin_3d.
+_MAX_DIM = int(np.iinfo(np.uint16).max)
+
 # ---------------------------------------------------------------------------
 # Lookup tables for Euler characteristic computation (Lee94 Table 2).
 # _EULER_ARR maps the 256 possible 3x3x3 configurations to their Euler
@@ -439,7 +446,7 @@ def _mark_removable_candidates(img, candidates, num_candidates, removable):
 
 
 @njit(cache=True)
-def _apply_removals(img, candidates, num_candidates, removable, removed_epoch, epoch):
+def _apply_removals(img, candidates, num_candidates, removable, removed_epoch, tag):
     """Sequentially remove voxels marked as removable, re-checking simplicity
     only when a neighbour was *already removed in the same batch*.
 
@@ -450,11 +457,10 @@ def _apply_removals(img, candidates, num_candidates, removable, removed_epoch, e
     neighbours have been removed yet in this batch, the old verification
     is still valid and we can skip the re-check.
 
-    ``removed_epoch`` is a 3-D stamp array - an epoch counter written at the
-    position of every voxel removed in this call.  Checking whether a
-    neighbour was removed is an O(26) stamp lookup, not an O(k) scan over
-    previously removed coordinates.  The array is never reset; epochs are
-    monotonically increasing so stale stamps are invisible.
+    ``removed_epoch`` is a 3-D stamp array - ``tag`` (a value in 1..255) is
+    written at the position of every voxel removed in this call.  Checking
+    whether a neighbour was removed is an O(26) stamp lookup, not an O(k) scan
+    over previously removed coordinates.
     """
     removed = 0
     neighborhood = np.empty(27, dtype=np.uint8)
@@ -476,7 +482,7 @@ def _apply_removals(img, candidates, num_candidates, removable, removed_epoch, e
                 for dc in range(-1, 2):
                     if dp == 0 and dr == 0 and dc == 0:
                         continue
-                    if removed_epoch[p + dp, r + dr, c + dc] == epoch:
+                    if removed_epoch[p + dp, r + dr, c + dc] == tag:
                         neighbor_removed = True
                         break
                 if neighbor_removed:
@@ -490,7 +496,7 @@ def _apply_removals(img, candidates, num_candidates, removable, removed_epoch, e
                 continue
 
         img[p, r, c] = 0
-        removed_epoch[p, r, c] = epoch
+        removed_epoch[p, r, c] = tag
         removed += 1
     return removed
 
@@ -507,10 +513,13 @@ def _compute_thin_image(img):
     num_borders = 6
     unchanged_borders = 0
 
-    candidates = np.empty((img.size, 3), dtype=np.int32)
-    removable = np.empty(img.size, dtype=np.uint8)
-    removed_epoch = np.zeros(img.shape, dtype=np.uint32)
-    epoch = 0
+    # Use #fg voxels as upper bound for number of candidates
+    num_foreground = np.count_nonzero(img)
+    candidates = np.empty((num_foreground, 3), dtype=np.uint16)
+    removable = np.empty(num_foreground, dtype=np.uint8)
+    # uint8's tradeoff: less ram usage vs. memset removed_epoch[:] = 0 every 255 epochs.
+    removed_epoch = np.zeros(img.shape, dtype=np.uint8)
+    tag = 0
 
     while unchanged_borders < num_borders:
         unchanged_borders = 0
@@ -523,14 +532,20 @@ def _compute_thin_image(img):
                 continue
 
             _mark_removable_candidates(img, candidates, num_candidates, removable)
-            epoch += 1
+
+            tag += 1
+            if tag > 255:
+                # All of 1..255 have been used; reuse would alias live stamps.
+                removed_epoch[:] = 0
+                tag = 1
+
             removed = _apply_removals(
                 img,
                 candidates,
                 num_candidates,
                 removable,
                 removed_epoch,
-                epoch,
+                tag,
             )
 
             if removed == 0:
@@ -555,10 +570,17 @@ def thin_3d(img):
     Raises
     ------
     ValueError
-        If input is not 3-dimensional.
+        If input is not 3-dimensional, or if any axis is longer than
+        ``_MAX_DIM`` voxels.
     """
     if img.ndim != 3:
         raise ValueError(f"Expected 3D input, got {img.ndim}D")
+    if max(img.shape) > _MAX_DIM:
+        raise ValueError(
+            f"Volume too large for 3D thinning: shape={img.shape}. "
+            f"Each axis must be at most {_MAX_DIM} voxels "
+            "(voxel coordinates are stored as uint16)."
+        )
 
     work = (img > 0).astype(np.uint8, copy=False)
     padded = np.zeros(
