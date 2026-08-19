@@ -188,7 +188,7 @@ def _run_batch(args: argparse.Namespace) -> int:
         summary_rows = []
         for idx, (in_path, safe_name) in enumerate(zip(input_paths, safe_names), 1):
             print(f"[{idx}/{total}] {in_path.name}", flush=True)
-            summary_rows.append(process_one(in_path, safe_name, out_dir, config))
+            summary_rows.extend(process_one(in_path, safe_name, out_dir, config))
     else:
         summary_rows = _run_parallel(
             input_paths, safe_names, out_dir, config, jobs, total
@@ -237,7 +237,7 @@ def _run_parallel(
         for fut in as_completed(futures):
             idx, name = futures[fut]
             try:
-                summary_rows.append(fut.result())
+                summary_rows.extend(fut.result())
                 print(f"[{idx}/{total}] {name}", flush=True)
             except Exception as exc:  # noqa: BLE001
                 print(

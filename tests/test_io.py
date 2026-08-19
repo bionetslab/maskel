@@ -8,7 +8,7 @@ from skan import Skeleton, summarize
 
 from maskel._io import save_analysis_outputs
 from maskel.config import OutputConfig
-from maskel.pipeline import AnalysisResult
+from maskel.pipeline import AnalysisResult, ObjectGraph
 
 
 class TestSaveAnalysisOutputs:
@@ -23,7 +23,9 @@ class TestSaveAnalysisOutputs:
         nodes: bool = False,
     ) -> AnalysisResult:
         skel = np.eye(10, dtype=np.uint8)
-        feat = {"n_branches": 4.0, "n_junctions": 1.0} if summary else {}
+        feat = (
+            [{"n_branches": 4.0, "n_junctions": 1.0, "object_id": 1}] if summary else []
+        )
         rad = np.ones((10, 10), dtype=np.float64) if radius else None
         brecs = [{"id": i, "len": float(i * 2)} for i in range(2)] if branches else []
         nrecs = [{"id": i, "deg": i + 2} for i in range(2)] if nodes else []
@@ -69,7 +71,7 @@ class TestSaveAnalysisOutputs:
     def test_3d_skeleton_with_png_raises(self, tmp_path):
         result = AnalysisResult(
             skeleton=np.ones((4, 4, 4), dtype=np.uint8),
-            summary_features={},
+            summary_features=[],
             branch_records=[],
             node_records=[],
         )
@@ -147,6 +149,7 @@ class TestSaveAnalysisOutputs:
         assert len(rows) == 1
         assert rows[0]["image"] == "img"
         assert rows[0]["n_branches"] == "4.0"
+        assert rows[0]["object_id"] == "1"
 
     def test_skips_summary_when_empty_features(self, tmp_path):
         save_analysis_outputs(
@@ -228,25 +231,31 @@ class TestSaveAnalysisOutputs:
         branch_data = summarize(graph, separator="-")
         return AnalysisResult(
             skeleton=cross_skel,
-            summary_features={"num_nodes": float(len(branch_data))},
+            summary_features=[{"num_nodes": float(len(branch_data)), "object_id": 1}],
             branch_records=[],
             node_records=[],
-            graph=graph,
-            branch_data=branch_data,
+            object_graphs=[
+                ObjectGraph(
+                    object_id=1,
+                    offset=(0, 0),
+                    graph=graph,
+                    branch_data=branch_data,
+                )
+            ],
             radius_matrix=np.ones_like(cross_skel, dtype=np.float64) * 2.0,
         )
 
     def test_saves_graphml(self, tmp_path, graph_result):
         cfg = OutputConfig(write_graphml=True)
         save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert (tmp_path / "img" / "img_graph.graphml").exists()
+        assert (tmp_path / "img" / "img_1_graph.graphml").exists()
 
     def test_skips_graphml_when_disabled(self, tmp_path, graph_result):
         cfg = OutputConfig(write_graphml=False)
         save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert not (tmp_path / "img" / "img_graph.graphml").exists()
+        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()
 
     def test_skips_graphml_when_graph_missing(self, tmp_path):
         cfg = OutputConfig(write_graphml=True)
         save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        assert not (tmp_path / "img" / "img_graph.graphml").exists()
+        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()

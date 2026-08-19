@@ -11,6 +11,7 @@ from typing import Any
 CONFIG_SCHEMA_VERSION = 3
 
 COLORABLE_BRANCH_PROPERTIES = [
+    "object_id",
     "tortuosity",
     "branch-distance",
     "euclidean-distance",

@@ -14,8 +14,8 @@ def process_one(
     safe_name: str,
     out_dir: Path,
     config: PipelineConfig,
-) -> dict[str, object]:
-    """Load, analyse, save one image. Returns summary row for agg CSV."""
+) -> list[dict[str, object]]:
+    """Load, analyse, save one image. Returns one summary row per object for agg CSV."""
     image = load_image(in_path)
     result = analyze_binary_image(image=image, config=config)
 
@@ -23,4 +23,4 @@ def process_one(
         out_dir, safe_name, result, config.output, write_summary=False
     )
 
-    return {"image": in_path.name, **result.summary_features}
+    return [{"image": in_path.name, **row} for row in result.summary_features]

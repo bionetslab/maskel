@@ -25,13 +25,15 @@ maskel run --input /path/to/images --config config.json --out outputs
 
 A config JSON can also be exported from the [napari-maskel](https://github.com/bionetslab/napari-maskel) plugin's **Save Config** button and used here directly — both consume the same schema (see below).
 
+Input images can be either a plain binary segmentation mask, or a multi-object instance segmentation map (more than one distinct nonzero value). In the latter case, every object is skeletonized independently — touching-but-distinct objects are correctly kept separate rather than merged into one skeleton — and every output row is tagged with the `object_id` it came from (the mask's own label value; `1` for a plain binary mask).
+
 CLI outputs:
 
-- `outputs/summary.csv` with one feature row per image
+- `outputs/summary.csv` with one feature row per object per image
 - Optional per-image skeleton outputs (default: `.npy`)
-- Optional per-image branch tables when `output.write_branch_csv=true`
-- Optional per-image node tables when `output.write_node_csv=true`
-- Optional per-image skeleton graphs when `output.write_graphml=true`
+- Optional per-image branch tables when `output.write_branch_csv=true` (includes an `object_id` column)
+- Optional per-image node tables when `output.write_node_csv=true` (includes an `object_id` column)
+- Optional per-object skeleton graphs when `output.write_graphml=true` (one `_<object_id>_graph.graphml` file per object)
 
 ## Configuration
 
@@ -73,7 +75,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `extraction.branches` | bool | `false` | Extract per-branch features for CSV export or napari visualization |
-| `extraction.branch_color_property` | str | `"tortuosity"` | Branch property used to color the napari shapes layer; one of `tortuosity`, `straightness`, `mean_radius`, `std_radius`, `volume`, `surface_area`, ... |
+| `extraction.branch_color_property` | str | `"tortuosity"` | Branch property used to color the napari shapes layer; one of `object_id`, `tortuosity`, `straightness`, `mean_radius`, `std_radius`, `volume`, `surface_area`, ... |
 | `extraction.branch_text` | bool | `false` | Display branch ID, length, and tortuosity labels on the napari branch layer |
 | `extraction.nodes` | bool | `false` | Extract per-node features for CSV export or napari visualization |
 | `extraction.summary` | bool | `true` | Compute summary features  |
