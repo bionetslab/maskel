@@ -124,6 +124,7 @@ def fractal_dimension(skeleton: np.ndarray) -> tuple[float, float]:
 def compute_radii(
     binary: np.ndarray,
     skeleton: np.ndarray,
+    spacing: tuple[float, ...] | None = None,
 ) -> tuple[np.ndarray, dict[str, float]]:
     """Compute vessel radii via Euclidean distance transform of the binary mask.
 
@@ -137,6 +138,9 @@ def compute_radii(
         Binary vessel mask (foreground > 0).
     skeleton : ndarray
         Binary skeleton of the same shape.
+    spacing : tuple[float, ...], optional
+        Per-axis physical size of one pixel/voxel. ``None`` (the default)
+        keeps isotropic unit spacing, matching scipy's own default.
 
     Returns
     -------
@@ -147,7 +151,7 @@ def compute_radii(
         ``min_radius``, ``max_radius``, ``mean_diameter``, ``std_diameter``,
         ``min_diameter``, ``max_diameter``).
     """
-    edt = distance_transform_edt(binary)
+    edt = distance_transform_edt(binary, sampling=spacing)
     radius_matrix = np.zeros_like(binary, dtype=np.float64)
     radius_matrix[skeleton > 0] = edt[skeleton > 0]
 
@@ -176,6 +180,7 @@ def per_segment_radii(
     radius_matrix: np.ndarray,
     graph: Skeleton,
     n_branches: int,
+    spacing: tuple[float, ...] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute per-segment radius/diameter statistics from an EDT radius matrix.
 
@@ -187,14 +192,29 @@ def per_segment_radii(
         Pre-built skan Skeleton graph.
     n_branches : int
         Number of branches (e.g. ``len(branch_data)``).
+    spacing : tuple[float, ...], optional
+        Per-axis physical size of one pixel/voxel, used to weight each
+        step along a branch's path by its real physical length rather
+        than one unit per pixel. ``None`` (the default) is equivalent to
+        isotropic unit spacing.
 
     Returns
     -------
     dict[str, ndarray]
         Arrays of length ``n_branches`` with keys ``mean_radius``,
         ``std_radius``, ``min_radius``, ``max_radius``, ``mean_diameter``,
-        ``std_diameter``, ``min_diameter``, ``max_diameter``.
+        ``std_diameter``, ``min_diameter``, ``max_diameter``, ``volume``,
+        ``surface_area``.
         Branches with no positive radius values yield ``nan``.
+
+    Notes
+    -----
+    ``volume``/``surface_area`` model the branch as a chain of frustums
+    between consecutive skeleton pixels along its path: each step's
+    physical length (accounting for diagonal steps, and for anisotropic
+    *spacing*) is weighted by the average of its two endpoints' radii,
+    rather than treating every pixel as contributing one unit of length
+    regardless of step direction.
     """
     n = n_branches
     mean_r = np.full(n, np.nan, dtype=np.float64)
@@ -204,17 +224,30 @@ def per_segment_radii(
     volume = np.full(n, np.nan, dtype=np.float64)
     surface_area = np.full(n, np.nan, dtype=np.float64)
 
+    spacing_arr = np.asarray(spacing, dtype=np.float64) if spacing is not None else None
+
     for i in range(n):
         coords = graph.path_coordinates(i)
         radii = radius_matrix[tuple(coords.T)]
-        radii = radii[radii > 0]
-        if radii.size:
-            mean_r[i] = np.mean(radii)
-            std_r[i] = np.std(radii)
-            min_r[i] = np.min(radii)
-            max_r[i] = np.max(radii)
-            volume[i] = np.pi * float(np.sum(radii**2))
-            surface_area[i] = 2.0 * np.pi * float(np.sum(radii))
+        radii_valid = radii[radii > 0]
+        if radii_valid.size:
+            mean_r[i] = np.mean(radii_valid)
+            std_r[i] = np.std(radii_valid)
+            min_r[i] = np.min(radii_valid)
+            max_r[i] = np.max(radii_valid)
+
+            # Model the branch as a chain of frustums between consecutive
+            # path points: each step's physical length (diagonal-aware,
+            # and spacing-aware for anisotropic voxels) is weighted by the
+            # average of its two endpoints' radii.
+            steps = np.diff(coords, axis=0).astype(np.float64)
+            if spacing_arr is not None:
+                steps = steps * spacing_arr
+            step_lengths = np.linalg.norm(steps, axis=1)
+            r_mid = (radii[:-1] + radii[1:]) / 2.0
+
+            volume[i] = np.pi * float(np.sum(r_mid**2 * step_lengths))
+            surface_area[i] = 2.0 * np.pi * float(np.sum(r_mid * step_lengths))
 
     return {
         "mean_radius": mean_r,
@@ -230,9 +263,25 @@ def per_segment_radii(
     }
 
 
-def build_vessel_graph(skeleton: np.ndarray) -> Skeleton:
-    """Build a graph representation from a binary vessel skeleton."""
-    return Skeleton(to_binary(skeleton))
+def build_vessel_graph(
+    skeleton: np.ndarray, spacing: tuple[float, ...] | None = None
+) -> Skeleton:
+    """Build a graph representation from a binary vessel skeleton.
+
+    Parameters
+    ----------
+    skeleton : ndarray
+        Binary skeleton array.
+    spacing : tuple[float, ...], optional
+        Per-axis physical size of one pixel/voxel, passed through to
+        ``skan.Skeleton``. Once built with spacing, everything downstream
+        via ``skan.summarize`` (``branch-distance``, ``euclidean-distance``,
+        and therefore ``total_length``/``mean_length``/``tortuosity``/``hgu``)
+        becomes physically correct automatically. ``graph.coordinates``
+        stay raw pixel indices regardless of spacing. ``None`` (the
+        default) keeps isotropic unit spacing.
+    """
+    return Skeleton(to_binary(skeleton), spacing=spacing if spacing is not None else 1)
 
 
 def extract_node_features(
@@ -316,6 +365,7 @@ def extract_vessel_features(
     binary: np.ndarray,
     include_fractal: bool = True,
     radius_stats: dict[str, float] | None = None,
+    spacing: tuple[float, ...] | None = None,
 ) -> dict[str, float]:
     """Extract graph-topology and segment statistics from a vessel skeleton.
 
@@ -336,12 +386,19 @@ def extract_vessel_features(
     radius_stats : dict[str, float], optional
         Pre-computed radius/diameter statistics from `compute_radii`.
         When None, radius features default to zero.
+    spacing : tuple[float, ...], optional
+        Per-axis physical size of one pixel/voxel. When given, scales
+        ``vessel_area`` from a raw pixel/voxel count into physical units
+        (``vessel_area_fraction`` needs no change since it's a ratio and
+        the scaling cancels). ``None`` (the default) keeps pixel units.
     """
     if branch_data.empty:
         return dict(_EMPTY_FEATURES)
 
     vessel_area = float(np.count_nonzero(binary))
-    vessel_area_fraction = vessel_area / float(binary.size)
+    if spacing is not None:
+        vessel_area *= float(np.prod(spacing))
+    vessel_area_fraction = float(np.count_nonzero(binary)) / float(binary.size)
 
     fd, fd_r2 = fractal_dimension(skeleton) if include_fractal else (0.0, 0.0)
 

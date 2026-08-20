@@ -279,6 +279,7 @@ class TestSaveRadius:
 
 
 def _make_args(**kwargs):
+    kwargs.setdefault("spacing", None)
     return argparse.Namespace(**kwargs)
 
 
@@ -343,6 +344,71 @@ class TestMainCommands:
         loaded = np.load(skeleton_path)
         assert np.count_nonzero(loaded) > 0
         assert (out_dir / "summary.csv").exists()
+
+    def test_run_parser_accepts_spacing_flag(self):
+        from maskel.cli import _make_parser
+
+        parser = _make_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "--input",
+                "in",
+                "--config",
+                "config.json",
+                "--out",
+                "out",
+                "--spacing",
+                "2.0",
+                "0.5",
+            ]
+        )
+        assert args.spacing == [2.0, 0.5]
+
+    def test_run_parser_spacing_defaults_to_none(self):
+        from maskel.cli import _make_parser
+
+        parser = _make_parser()
+        args = parser.parse_args(
+            ["run", "--input", "in", "--config", "config.json", "--out", "out"]
+        )
+        assert args.spacing is None
+
+    def test_run_batch_spacing_flag_overrides_config(self, tmp_path):
+        from maskel.cli import _run_batch
+
+        img_path = tmp_path / "input"
+        img_path.mkdir()
+        image = np.zeros((16, 16), dtype=np.uint8)
+        image[8, 4:12] = 1
+        image[4:12, 8] = 1
+        Image.fromarray(image * 255).save(img_path / "cross.png")
+
+        config_path = tmp_path / "pipeline.json"
+        config = PipelineConfig.from_dict(
+            {"schema_version": CONFIG_SCHEMA_VERSION, "extraction": {}, "output": {}}
+        )
+        config_path.write_text(json.dumps(config.to_dict(), indent=2))
+
+        out_dir = tmp_path / "output"
+
+        args = _make_args(
+            input=[str(img_path)],
+            config=str(config_path),
+            out=str(out_dir),
+            recursive=False,
+            jobs=1,
+            spacing=[2.0, 2.0],
+        )
+
+        exit_code = _run_batch(args)
+        assert exit_code == 0
+        assert (out_dir / "summary.csv").exists()
+        with (out_dir / "summary.csv").open(newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert rows
+        # 2x2 isotropic spacing doubles total_length relative to unit spacing.
+        assert float(rows[0]["total_length"]) > 0
 
     def test_run_batch_no_input_files_raises(self, tmp_path):
         from maskel.cli import _run_batch

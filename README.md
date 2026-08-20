@@ -41,7 +41,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "extraction": {
     "branches": false,
     "branch_color_property": "tortuosity",
@@ -58,7 +58,8 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
     "closing_iterations": 0,
     "fill_holes": false,
     "max_hole_size": 0,
-    "show_preprocessed": false
+    "show_preprocessed": false,
+    "spacing": null
   },
   "output": {
     "write_skeleton_npy": true,
@@ -90,6 +91,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `extraction.fill_holes` | bool | `false` | Fill holes in the binary segmentation before thinning |
 | `extraction.max_hole_size` | int | `0` | Maximum hole area (px) to fill when `fill_holes` is true; 0 = fill all |
 | `extraction.show_preprocessed` | bool | `false` | Show preprocessed binary layer (after closing and hole filling) in the napari viewer |
+| `extraction.spacing` | list[float] or `null` | `null` | Per-axis physical pixel/voxel size (length must match the image's dimensionality: 2 for 2D, 3 for 3D). When set, length/area/volume features come out in physical units instead of pixel units. A per-image dimensionality mismatch falls back to `null` (isotropic pixel units) with a warning rather than failing the batch. Box-counting `fractal_dimension` is only valid for isotropic voxels, so it's forced to `0.0` (with a warning) whenever spacing is set and anisotropic. |
 | `output.write_skeleton_npy` | bool | `true` | Save skeleton as `.npy` (NumPy array) per image |
 | `output.write_skeleton_png` | bool | `false` | Save binary skeleton mask as `.png` per image |
 | `output.write_summary_csv` | bool | `true` | Write aggregated per-image features to `summary.csv` |

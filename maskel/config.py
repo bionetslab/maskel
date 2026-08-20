@@ -8,7 +8,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 4
+CONFIG_SCHEMA_VERSION = 5
 
 COLORABLE_BRANCH_PROPERTIES = [
     "object_id",
@@ -60,6 +60,7 @@ class ExtractionConfig:
     fill_holes: bool = False
     max_hole_size: int = 0
     show_preprocessed: bool = False
+    spacing: tuple[float, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,12 +80,16 @@ class ExtractionConfig:
             "fill_holes": self.fill_holes,
             "max_hole_size": self.max_hole_size,
             "show_preprocessed": self.show_preprocessed,
+            "spacing": list(self.spacing) if self.spacing is not None else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExtractionConfig:
         _warn_unknown_keys({f.name for f in fields(cls)}, data)
-        return cls(**{f.name: data.get(f.name, f.default) for f in fields(cls)})
+        kwargs = {f.name: data.get(f.name, f.default) for f in fields(cls)}
+        spacing = kwargs.get("spacing")
+        kwargs["spacing"] = tuple(spacing) if spacing is not None else None
+        return cls(**kwargs)
 
 
 @dataclass
