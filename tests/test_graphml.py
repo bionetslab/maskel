@@ -185,3 +185,38 @@ class TestWriteGraphml:
             key_el.get("attr.type") for key_el in tree.findall(".//g:key", ns)
         }
         assert "long" not in attr_types
+
+    def test_no_long_attribute_type_for_int_summary_feature(
+        self, tmp_path, cross_graph
+    ):
+        """Graph-level (summary_features) ints, e.g. ``object_id``, must also
+        avoid the ``long`` attribute type yEd fails to import."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path, summary_features={"object_id": 1})
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        attr_types = {
+            key_el.get("attr.type") for key_el in tree.findall(".//g:key", ns)
+        }
+        assert "long" not in attr_types
+
+    def test_yfiles_edge_geometry_present(self, tmp_path, cross_graph):
+        """Without yFiles edgegraphics data, yEd imports the edges but never
+        draws them, so the skeleton looks like disconnected node squares."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {
+            "g": "http://graphml.graphdrawing.org/xmlns",
+            "y": "http://www.yworks.com/xml/graphml",
+        }
+        edge_shapes = [
+            edge_el.find(".//y:PolyLineEdge", ns)
+            for edge_el in tree.findall(".//g:edge", ns)
+        ]
+        assert len(edge_shapes) == len(branch_data)
+        assert all(shape is not None for shape in edge_shapes)

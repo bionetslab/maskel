@@ -28,6 +28,7 @@ _EXCLUDED_COLUMNS = {
 _GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
 _YFILES_NS = "http://www.yworks.com/xml/graphml"
 _YFILES_NODE_KEY = "yfiles_node_gfx"
+_YFILES_EDGE_KEY = "yfiles_edge_gfx"
 _DEFAULT_NODE_SIZE = 10.0
 
 
@@ -93,7 +94,7 @@ def build_networkx_graph(
 
     for summary in (summary_features or {}).items():
         if not _is_missing(summary[1]):
-            G.graph[summary[0]] = summary[1]
+            G.graph[summary[0]] = _as_graphml_value(summary[1])
 
     for node_id in G.nodes():
         coords = graph.coordinates[node_id]
@@ -119,24 +120,34 @@ def build_networkx_graph(
 
 
 def _add_yfiles_geometry(G: nx.MultiGraph, path: Path) -> None:
-    """Inject yFiles node visualization data so yEd lays out nodes by position.
+    """Inject yFiles visualization data so yEd lays out the graph on open.
 
-    Reads back the file ``nx.write_graphml`` just wrote and adds a
-    ``y:ShapeNode``/``y:Geometry`` block per node, positioned from its
-    ``coord_*`` attributes (last two axes = row, col) and sized from
-    ``radius`` when present. Without this, yEd has no placement info and
-    stacks every node at the same spot, rendering as a single yellow square.
+    Reads back the file ``nx.write_graphml`` just wrote and adds:
+
+    - a ``y:ShapeNode``/``y:Geometry`` block per node, positioned from its
+      ``coord_*`` attributes (last two axes = row, col) and sized from
+      ``radius`` when present. Without this, yEd has no placement info and
+      stacks every node at the same spot, rendering as a single yellow
+      square.
+    - a ``y:PolyLineEdge`` block per edge. yEd only draws an edge as a line
+      between its nodes if it carries this visualization data; without it,
+      edges are imported (the topology is intact) but simply not rendered.
     """
     ET.register_namespace("", _GRAPHML_NS)
     ET.register_namespace("y", _YFILES_NS)
     tree = ET.parse(path)
     root = tree.getroot()
 
-    key_el = ET.Element(
+    node_key_el = ET.Element(
         f"{{{_GRAPHML_NS}}}key",
         {"for": "node", "id": _YFILES_NODE_KEY, "yfiles.type": "nodegraphics"},
     )
-    root.insert(0, key_el)
+    edge_key_el = ET.Element(
+        f"{{{_GRAPHML_NS}}}key",
+        {"for": "edge", "id": _YFILES_EDGE_KEY, "yfiles.type": "edgegraphics"},
+    )
+    root.insert(0, edge_key_el)
+    root.insert(0, node_key_el)
 
     graph_el = root.find(f"{{{_GRAPHML_NS}}}graph")
     for node_el in graph_el.findall(f"{{{_GRAPHML_NS}}}node"):
@@ -172,6 +183,22 @@ def _add_yfiles_geometry(G: nx.MultiGraph, path: Path) -> None:
             shape_el,
             f"{{{_YFILES_NS}}}BorderStyle",
             {"color": "#000000", "type": "line", "width": "1.0"},
+        )
+
+    for edge_el in graph_el.findall(f"{{{_GRAPHML_NS}}}edge"):
+        data_el = ET.SubElement(
+            edge_el, f"{{{_GRAPHML_NS}}}data", {"key": _YFILES_EDGE_KEY}
+        )
+        edge_shape_el = ET.SubElement(data_el, f"{{{_YFILES_NS}}}PolyLineEdge")
+        ET.SubElement(
+            edge_shape_el,
+            f"{{{_YFILES_NS}}}LineStyle",
+            {"color": "#000000", "type": "line", "width": "1.0"},
+        )
+        ET.SubElement(
+            edge_shape_el,
+            f"{{{_YFILES_NS}}}Arrows",
+            {"source": "none", "target": "none"},
         )
 
     tree.write(path, xml_declaration=True, encoding="UTF-8")
