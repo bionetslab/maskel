@@ -202,6 +202,21 @@ class TestWriteGraphml:
         }
         assert "long" not in attr_types
 
+    def test_edge_ids_are_unique(self, tmp_path, cross_graph):
+        """networkx assigns each edge its MultiGraph key (0, 1, ... *per node
+        pair*) as its GraphML id, so distinct edges between different node
+        pairs all collide on id="0". yEd looks up edges by id and drops all
+        but one of a colliding set, hiding most of the graph."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        ids = [edge_el.get("id") for edge_el in tree.findall(".//g:edge", ns)]
+        assert len(ids) == len(branch_data)
+        assert len(set(ids)) == len(ids)
+
     def test_yfiles_edge_geometry_present(self, tmp_path, cross_graph):
         """Without yFiles edgegraphics data, yEd imports the edges but never
         draws them, so the skeleton looks like disconnected node squares."""

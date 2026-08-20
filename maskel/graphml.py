@@ -132,6 +132,10 @@ def _add_yfiles_geometry(G: nx.MultiGraph, path: Path) -> None:
     - a ``y:PolyLineEdge`` block per edge. yEd only draws an edge as a line
       between its nodes if it carries this visualization data; without it,
       edges are imported (the topology is intact) but simply not rendered.
+    - a unique ``id`` per edge element, replacing networkx's MultiGraph-key
+      id (0, 1, ... *per node pair*, so most edges in a graph collide on
+      id="0"). yEd looks up edges by id and drops all but one of a colliding
+      set, so without this only one edge in the whole graph is ever shown.
     """
     ET.register_namespace("", _GRAPHML_NS)
     ET.register_namespace("y", _YFILES_NS)
@@ -185,7 +189,12 @@ def _add_yfiles_geometry(G: nx.MultiGraph, path: Path) -> None:
             {"color": "#000000", "type": "line", "width": "1.0"},
         )
 
-    for edge_el in graph_el.findall(f"{{{_GRAPHML_NS}}}edge"):
+    for i, edge_el in enumerate(graph_el.findall(f"{{{_GRAPHML_NS}}}edge")):
+        # networkx sets an edge's id to its MultiGraph key (0, 1, ...), which
+        # only disambiguates parallel edges between the *same* node pair, so
+        # most edges in the file end up sharing id="0". yEd looks up edges by
+        # id and drops all but one of a colliding set, hiding most edges.
+        edge_el.set("id", f"e{i}")
         data_el = ET.SubElement(
             edge_el, f"{{{_GRAPHML_NS}}}data", {"key": _YFILES_EDGE_KEY}
         )
