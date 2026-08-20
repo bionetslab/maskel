@@ -107,7 +107,10 @@ def thin_2d(img):
     ndarray
         Thinned binary image with the same shape as img.
     """
-    img = img.astype(np.uint8).copy()
+    if img.ndim != 2:
+        raise ValueError(f"Expected 2D input, got {img.ndim}D")
+    if img.min() != 0 or img.max() != 1:
+        raise ValueError("Input must be binary [0, 1]")
     h, w = img.shape
 
     padded = np.zeros((h + 2, w + 2), dtype=np.uint8)

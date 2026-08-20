@@ -16,9 +16,8 @@ Two companion repos consume this package:
 uv sync --extra dev              # install core + test tools
 
 uv run pytest                    # all tests
-uv run pytest -m "not slow"      # skip the 3D regression + skimage-comparison tests
+uv run pytest -m "not slow"      # skip the 3D skimage-comparison test
 uv run pytest tests/test_spur_pruning.py::test_name  # single test
-uv run pytest --update-baseline  # regenerate regression baselines in tests/skeletons/ and tests/features/
 
 uvx ruff check                   # lint (no repo-specific ruff config; defaults apply)
 uvx ruff format --check          # format check
@@ -61,6 +60,6 @@ Pipeline stages in `_analyze_single_object` (run once per object), in order, eac
 
 ## Tests
 
-Regression tests (`test_3d_thinning_regression.py`, `test_3d_skimage_comparison.py`, marked `slow`) compare against baselines in `tests/skeletons/*.npz` and `tests/features/*.csv`, generated from a scikit-image brain volume (via `pooch`) — no large dataset is checked into this repo. Use `--update-baseline` deliberately — it overwrites the checked-in ground truth, so only do it when a change is an intentional algorithm update, and inspect the resulting diff before committing.
+`test_3d_skimage_comparison.py` (marked `slow`) asserts `lee94_thin` matches `skimage.morphology.skeletonize` voxel-for-voxel on a scikit-image brain volume (fetched via `pooch`) — no large dataset is checked into this repo. It thresholds the volume first, since `thin_3d` rejects non-binary input while `skimage` binarizes internally.
 
 The equivalent regression tests against the 45-image HRF dataset live in `maskel-evaluations`, since they depend on that external (107MB) dataset rather than anything self-contained.

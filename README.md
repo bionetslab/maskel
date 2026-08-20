@@ -119,13 +119,10 @@ Add the appropriate line to your shell rc for persistent tab-completion.
 
 ```sh
 uv sync --extra dev && pytest                     # all tests
-uv sync --extra dev && pytest -m "not slow"       # skip regression tests
+uv sync --extra dev && pytest -m "not slow"       # skip the slow 3D comparison test
 ```
 
-- **3D regression** - thinning + features on a brain volume (from scikit-image), compared against saved baselines
-- **3D comparison** - maskel `lee94_thin` vs `skimage.morphology.skeletonize` on the brain volume, asserting identical output
-
-First run (or `--update-baseline`) generates baselines in `tests/skeletons/` and `tests/features/`.
+- **3D comparison** - maskel `lee94_thin` vs `skimage.morphology.skeletonize` on a brain volume (from scikit-image), asserting identical output
 
 Real-data regression tests against the HRF dataset (2D thinning + feature extraction on all 45 samples) live in [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations), since they depend on that external dataset.
 

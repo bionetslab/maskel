@@ -570,11 +570,13 @@ def thin_3d(img):
     Raises
     ------
     ValueError
-        If input is not 3-dimensional, or if any axis is longer than
+        If input is not 3-dimensional, is not binary, or if any axis is longer than
         ``_MAX_DIM`` voxels.
     """
     if img.ndim != 3:
         raise ValueError(f"Expected 3D input, got {img.ndim}D")
+    if img.min() != 0 or img.max() != 1:
+        raise ValueError("Input must be binary [0, 1]")
     if max(img.shape) > _MAX_DIM:
         raise ValueError(
             f"Volume too large for 3D thinning: shape={img.shape}. "
@@ -582,12 +584,11 @@ def thin_3d(img):
             "(voxel coordinates are stored as uint16)."
         )
 
-    work = (img > 0).astype(np.uint8, copy=False)
     padded = np.zeros(
-        (work.shape[0] + 2, work.shape[1] + 2, work.shape[2] + 2),
+        (img.shape[0] + 2, img.shape[1] + 2, img.shape[2] + 2),
         dtype=np.uint8,
     )
-    padded[1:-1, 1:-1, 1:-1] = work
+    padded[1:-1, 1:-1, 1:-1] = img
 
     out = _compute_thin_image(padded)
     return out[1:-1, 1:-1, 1:-1].copy()
