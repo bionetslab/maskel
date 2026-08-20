@@ -570,7 +570,7 @@ def thin_3d(img):
     Raises
     ------
     ValueError
-        If input is not 3-dimensional, or if any axis is longer than
+        If input is not 3-dimensional, is not binary, or if any axis is longer than
         ``_MAX_DIM`` voxels.
     """
     if img.ndim != 3:

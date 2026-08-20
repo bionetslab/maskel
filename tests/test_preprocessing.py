@@ -47,7 +47,10 @@ class TestClosing:
 
 class TestFillHoles:
     def test_fill_holes_fills_enclosed_void(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # The 1px background border is what keeps a 0 in the mask once the hole
+        # is filled - an all-foreground object is not valid thinning input.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[6:10, 6:10] = 0
         ring[6:10, 6] = 1
         ring[6:10, 9] = 1
@@ -83,7 +86,9 @@ class TestMaxHoleSize:
         assert not result.preprocessed_binary[9:23, 9:23].any()
 
     def test_max_hole_size_fills_small_holes(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see test_fill_holes_fills_enclosed_void.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:9, 7:9] = 0
         ring[7:9, 7] = 1
         ring[7:9, 8] = 1
@@ -100,7 +105,9 @@ class TestMaxHoleSize:
         assert result.preprocessed_binary[7:9, 7:9].all()
 
     def test_max_hole_size_zero_fills_all(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see test_fill_holes_fills_enclosed_void.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:11, 7:11] = 0
         ring[7:11, 7] = 1
         ring[7:11, 10] = 1
@@ -130,7 +137,9 @@ class TestPreprocessedBinary:
         assert result.preprocessed_binary.shape == img.shape
 
     def test_set_when_fill_holes_active(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see TestFillHoles.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:9, 7:9] = 0
         ring[7:9, 7] = 1
         ring[7:9, 8] = 1
