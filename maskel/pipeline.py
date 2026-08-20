@@ -283,10 +283,10 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
                 )
             graph = build_vessel_graph(skeleton)
 
-    # -- optional: vessel radius (EDT on the final skeleton) ------------
+    # -- optional: mask radius (EDT on the final skeleton) --------------
     radius_matrix = None
     radius_stats = None
-    if config.extraction.vessel_radius:
+    if config.extraction.mask_radius:
         radius_matrix, radius_stats = compute_radii(binary, skeleton)
 
     branch_data = summarize(graph, separator="-")
@@ -379,7 +379,7 @@ def analyze_segmentation_mask(
             objects=[],
         )
 
-    want_radius = config.extraction.vessel_radius
+    want_radius = config.extraction.mask_radius
     want_preprocessed = (
         config.extraction.closing_iterations > 0 or config.extraction.fill_holes
     )

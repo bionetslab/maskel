@@ -41,7 +41,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "extraction": {
     "branches": false,
     "branch_color_property": "tortuosity",
@@ -49,7 +49,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
     "nodes": false,
     "summary": true,
     "fractal_dimension": false,
-    "vessel_radius": false,
+    "mask_radius": false,
     "junction_cleanup": false,
     "cleanup_threshold_factor": 2.5,
     "prune_spurs": false,
@@ -80,7 +80,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `extraction.nodes` | bool | `false` | Extract per-node features for CSV export or napari visualization |
 | `extraction.summary` | bool | `true` | Compute summary features  |
 | `extraction.fractal_dimension` | bool | `false` | Compute fractal dimension of the skeleton |
-| `extraction.vessel_radius` | bool | `false` | Estimate vessel radius using EDT from the segmentation |
+| `extraction.mask_radius` | bool | `false` | Estimate mask radius using EDT from the segmentation |
 | `extraction.junction_cleanup` | bool | `false` | Clean up ambiguous junction pixels after thinning |
 | `extraction.cleanup_threshold_factor` | float | `2.5` | Sensitivity for junction cleanup (higher = larger cycles get collapsed) |
 | `extraction.prune_spurs` | bool | `false` | Remove short endpoint-to-junction branches (thinning spur artifacts) after skeletonization |
@@ -95,7 +95,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `output.write_summary_csv` | bool | `true` | Write aggregated per-image features to `summary.csv` |
 | `output.write_branch_csv` | bool | `false` | Write per-branch CSV tables (requires `extraction.branches`) |
 | `output.write_node_csv` | bool | `false` | Write per-node CSV tables (requires `extraction.nodes`) |
-| `output.write_radius` | bool | `false` | Write per-pixel radius matrix as `.npy` (requires `extraction.vessel_radius`) |
+| `output.write_radius` | bool | `false` | Write per-pixel radius matrix as `.npy` (requires `extraction.mask_radius`) |
 | `output.write_graphml` | bool | `false` | Write skeleton graph as `.graphml` per image (nodes = graph nodes, edges = branches) |
 
 ### Shell completions

@@ -115,9 +115,9 @@ class TestAnalyzeSegmentationMask:
         result = analyze_segmentation_mask(cross_skel, config)
         assert result.branch_records == []
 
-    def test_vessel_radius_enabled(self, cross_skel):
+    def test_mask_radius_enabled(self, cross_skel):
         config = PipelineConfig(
-            extraction=ExtractionConfig(vessel_radius=True, summary=True),
+            extraction=ExtractionConfig(mask_radius=True, summary=True),
             output=OutputConfig(),
         )
         result = analyze_segmentation_mask(cross_skel, config)
@@ -126,13 +126,13 @@ class TestAnalyzeSegmentationMask:
         assert result.radius_matrix.any()
         assert result.summary_features[0]["mean_radius"] > 0
 
-    def test_vessel_radius_disabled_radius_none(self, cross_skel, analysis_config):
+    def test_mask_radius_disabled_radius_none(self, cross_skel, analysis_config):
         result = analyze_segmentation_mask(cross_skel, analysis_config)
         assert result.radius_matrix is None
 
     def test_radius_stats_in_summary_when_enabled(self, cross_skel):
         config = PipelineConfig(
-            extraction=ExtractionConfig(vessel_radius=True, summary=True),
+            extraction=ExtractionConfig(mask_radius=True, summary=True),
             output=OutputConfig(),
         )
         result = analyze_segmentation_mask(cross_skel, config)
@@ -170,7 +170,7 @@ class TestAnalyzeSegmentationMask:
                 branch_text=True,
                 summary=True,
                 fractal_dimension=True,
-                vessel_radius=True,
+                mask_radius=True,
             ),
             output=OutputConfig(),
         )
@@ -189,7 +189,7 @@ class TestAnalyzeSegmentationMask:
                 branch_text=False,
                 summary=False,
                 fractal_dimension=False,
-                vessel_radius=False,
+                mask_radius=False,
             ),
             output=OutputConfig(),
         )
@@ -212,7 +212,7 @@ class TestAnalyzeSegmentationMask:
         vol = line_volume((12, 12, 12), axis=2)
         config = PipelineConfig(
             extraction=ExtractionConfig(
-                vessel_radius=True, fractal_dimension=True, summary=True
+                mask_radius=True, fractal_dimension=True, summary=True
             ),
             output=OutputConfig(),
         )
