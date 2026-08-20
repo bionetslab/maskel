@@ -63,6 +63,19 @@ def _make_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of parallel workers (0 = all CPU cores).",
     )
+    run_parser.add_argument(
+        "--spacing",
+        nargs="+",
+        type=float,
+        default=None,
+        help=(
+            "Per-axis physical pixel/voxel size (e.g. '--spacing 2.0 2.0' "
+            "for 2D or '--spacing 1.0 0.5 0.5' for 3D), overriding the "
+            "config's extraction.spacing for this whole batch run. Images "
+            "whose dimensionality doesn't match fall back to isotropic "
+            "spacing with a warning, rather than failing the batch."
+        ),
+    )
 
     init_parser = subparsers.add_parser(
         "init",
@@ -171,6 +184,8 @@ def _run_batch(args: argparse.Namespace) -> int:
     from maskel._io import write_csv
 
     config = load_pipeline_config(Path(args.config))
+    if args.spacing is not None:
+        config.extraction.spacing = tuple(args.spacing)
     input_paths = _discover_input_paths(args.input, recursive=args.recursive)
     if not input_paths:
         raise ValueError("No input files found. Check --input and --recursive.")

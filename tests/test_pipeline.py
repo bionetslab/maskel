@@ -330,3 +330,122 @@ class TestMultiObject:
         )
         result = analyze_segmentation_mask(mask, config)
         assert {row["object_id"] for row in result.summary_features} == {3, 4}
+
+
+def _straight_line_mask(shape=(10, 30), n_pixels=20):
+    mask = np.zeros(shape, dtype=np.uint8)
+    mask[5, 5 : 5 + n_pixels] = 1
+    return mask
+
+
+class TestSpacing:
+    @pytest.fixture(autouse=True)
+    def _reset_fractal_warning_flag(self):
+        """The anisotropic-fractal-dimension warning is printed at most once
+        per process (to avoid spamming stderr across a whole batch run) -
+        reset that module-level flag around each test so tests that assert
+        on the warning don't depend on test execution order."""
+        import maskel.pipeline as pipeline_module
+
+        pipeline_module._fractal_anisotropic_warned = False
+        yield
+        pipeline_module._fractal_anisotropic_warned = False
+
+    def test_isotropic_spacing_scales_lengths(self):
+        mask = _straight_line_mask()
+        config_unit = PipelineConfig(
+            extraction=ExtractionConfig(summary=True), output=OutputConfig()
+        )
+        config_scaled = PipelineConfig(
+            extraction=ExtractionConfig(summary=True, spacing=(2.0, 2.0)),
+            output=OutputConfig(),
+        )
+
+        result_unit = analyze_segmentation_mask(mask, config_unit)
+        result_scaled = analyze_segmentation_mask(mask, config_scaled)
+
+        unit_length = result_unit.summary_features[0]["total_length"]
+        scaled_length = result_scaled.summary_features[0]["total_length"]
+        assert scaled_length == pytest.approx(2.0 * unit_length)
+        assert unit_length == pytest.approx(19.0)
+
+    def test_anisotropic_spacing_on_axis_aligned_segment(self):
+        mask = _straight_line_mask()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True, mask_radius=True, spacing=(2.0, 0.5)
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+        # line varies along axis 1 only: 19 unit steps * 0.5 spacing
+        expected_length = 19 * 0.5
+        assert result.summary_features[0]["total_length"] == pytest.approx(
+            expected_length
+        )
+
+    def test_dimension_mismatch_warns_and_falls_back(self, capsys):
+        mask = _straight_line_mask()  # 2D mask
+        config = PipelineConfig(
+            extraction=ExtractionConfig(summary=True, spacing=(1.0, 1.0, 1.0)),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+        captured = capsys.readouterr()
+        assert "spacing" in captured.err.lower()
+        assert result.summary_features  # ran to completion, didn't raise
+        # falls back to isotropic: same as no spacing at all.
+        config_none = PipelineConfig(
+            extraction=ExtractionConfig(summary=True, spacing=None),
+            output=OutputConfig(),
+        )
+        result_none = analyze_segmentation_mask(mask, config_none)
+        assert result.summary_features[0]["total_length"] == pytest.approx(
+            result_none.summary_features[0]["total_length"]
+        )
+
+    def test_fractal_dimension_anisotropic_spacing_forced_to_zero(self, capsys):
+        vol = cross_volume()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True, fractal_dimension=True, spacing=(1.0, 1.0, 2.0)
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(vol, config)
+        assert result.summary_features[0]["fractal_dimension"] == 0.0
+        captured = capsys.readouterr()
+        assert "fractal" in captured.err.lower()
+
+    def test_fractal_dimension_isotropic_spacing_computes_normally(self, cross_skel):
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True, fractal_dimension=True, spacing=(2.0, 2.0)
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(cross_skel, config)
+        assert result.summary_features[0]["fractal_dimension"] > 0
+
+    def test_fractal_dimension_none_spacing_computes_normally(self, cross_skel):
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True, fractal_dimension=True, spacing=None
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(cross_skel, config)
+        assert result.summary_features[0]["fractal_dimension"] > 0
+
+    def test_fractal_dimension_not_requested_no_warning(self, capsys):
+        vol = cross_volume()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True, fractal_dimension=False, spacing=(1.0, 1.0, 2.0)
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(vol, config)
+        assert result.summary_features[0]["fractal_dimension"] == 0.0
+        captured = capsys.readouterr()
+        assert "fractal" not in captured.err.lower()

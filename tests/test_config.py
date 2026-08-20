@@ -57,6 +57,32 @@ class TestExtractionConfig:
         assert "'bar'" in captured.err
         assert "'foo'" in captured.err
 
+    def test_spacing_defaults_to_none(self):
+        c = ExtractionConfig()
+        assert c.spacing is None
+
+    def test_spacing_round_trip_dict_preserves_tuple(self):
+        original = ExtractionConfig(spacing=(2.0, 1.0))
+        as_dict = original.to_dict()
+        assert as_dict["spacing"] == [2.0, 1.0]
+        restored = ExtractionConfig.from_dict(as_dict)
+        assert restored.spacing == (2.0, 1.0)
+        assert isinstance(restored.spacing, tuple)
+        assert restored == original
+
+    def test_spacing_none_round_trips_as_none(self):
+        original = ExtractionConfig(spacing=None)
+        as_dict = original.to_dict()
+        assert as_dict["spacing"] is None
+        restored = ExtractionConfig.from_dict(as_dict)
+        assert restored.spacing is None
+        assert restored == original
+
+    def test_spacing_from_dict_coerces_list_to_tuple(self):
+        c = ExtractionConfig.from_dict({"spacing": [1.0, 0.5, 0.5]})
+        assert c.spacing == (1.0, 0.5, 0.5)
+        assert isinstance(c.spacing, tuple)
+
 
 class TestOutputConfig:
     def test_defaults(self):

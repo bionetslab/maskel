@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,12 @@ from maskel.thin import lee94_thin
 if TYPE_CHECKING:
     from pandas import DataFrame
     from skan import Skeleton
+
+# Printed at most once per process: box-counting fractal dimension is
+# invalid for anisotropic voxels, so it's forced to 0.0 whenever spacing is
+# both provided and anisotropic. This flag keeps a batch run (many images,
+# same config) from repeating the same warning once per object/image.
+_fractal_anisotropic_warned = False
 
 
 @dataclass
@@ -213,13 +220,23 @@ class _ObjectResult:
     preprocessed_binary: np.ndarray | None = None
 
 
-def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _ObjectResult:
+def _analyze_single_object(
+    binary: np.ndarray,
+    config: PipelineConfig,
+    spacing: tuple[float, ...] | None = None,
+) -> _ObjectResult:
     """Run the skeletonization + extraction pipeline for one binary object.
 
     *binary* is expected to already be a single object's cropped binary mask
     (see ``_iter_object_crops``); this is the same pipeline the whole image
     used to go through as a single unit before per-object splitting.
+
+    *spacing* is the already-validated per-axis physical pixel/voxel size
+    for this object's crop (``None`` for isotropic unit spacing) - the
+    dimensionality check against the full mask happens once in
+    ``analyze_segmentation_mask``, not per object.
     """
+    global _fractal_anisotropic_warned
     # -- optional: morphological preprocessing -------------------------
     preprocessed_binary: np.ndarray | None = None
     if config.extraction.closing_iterations > 0 or config.extraction.fill_holes:
@@ -245,7 +262,7 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
     # -- optional: collapse triangle junction artifacts -----------------
     # (requires EDT; done on the original skeleton before graph building)
     if config.extraction.junction_cleanup:
-        rm_temp, _ = compute_radii(binary, skeleton)
+        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing)
         skeleton = collapse_triangle_junctions(
             skeleton,
             radius_matrix=rm_temp,
@@ -253,7 +270,7 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
         )
 
     # -- build graph & branch data on the (potentially cleaned) skeleton -
-    graph = build_vessel_graph(skeleton)
+    graph = build_vessel_graph(skeleton, spacing=spacing)
 
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction
@@ -281,18 +298,20 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
                     node_records=[],
                     preprocessed_binary=preprocessed_binary,
                 )
-            graph = build_vessel_graph(skeleton)
+            graph = build_vessel_graph(skeleton, spacing=spacing)
 
     # -- optional: mask radius (EDT on the final skeleton) --------------
     radius_matrix = None
     radius_stats = None
     if config.extraction.mask_radius:
-        radius_matrix, radius_stats = compute_radii(binary, skeleton)
+        radius_matrix, radius_stats = compute_radii(binary, skeleton, spacing=spacing)
 
     branch_data = summarize(graph, separator="-")
 
     if radius_matrix is not None and not branch_data.empty:
-        per_seg = per_segment_radii(radius_matrix, graph, len(branch_data))
+        per_seg = per_segment_radii(
+            radius_matrix, graph, len(branch_data), spacing=spacing
+        )
         for key, arr in per_seg.items():
             branch_data[key] = arr
 
@@ -314,6 +333,26 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
         straightness[valid] = euclidean[valid] / branch_dist[valid]
         branch_data["straightness"] = straightness
 
+    # Box-counting fractal dimension is only valid for isotropic voxels;
+    # force it off (matching the existing "disabled" convention of
+    # returning (0.0, 0.0)) whenever spacing is both provided and
+    # anisotropic. Policy lives here, not in features.py, so that module
+    # stays pure/spacing-oblivious for this override.
+    include_fractal = config.extraction.fractal_dimension
+    if (
+        include_fractal
+        and spacing is not None
+        and not all(s == spacing[0] for s in spacing)
+    ):
+        if not _fractal_anisotropic_warned:
+            print(
+                "Warning: fractal_dimension is invalid for anisotropic "
+                f"spacing {spacing}; forcing it to 0.0.",
+                file=sys.stderr,
+            )
+            _fractal_anisotropic_warned = True
+        include_fractal = False
+
     summary_features: dict[str, float] = {}
     if config.extraction.summary:
         summary_features = extract_vessel_features(
@@ -321,8 +360,9 @@ def _analyze_single_object(binary: np.ndarray, config: PipelineConfig) -> _Objec
             graph,
             branch_data,
             binary=binary,
-            include_fractal=config.extraction.fractal_dimension,
+            include_fractal=include_fractal,
             radius_stats=radius_stats,
+            spacing=spacing,
         )
 
     branch_records: list[dict[str, object]] = []
@@ -379,6 +419,16 @@ def analyze_segmentation_mask(
             objects=[],
         )
 
+    spacing = config.extraction.spacing
+    if spacing is not None and len(spacing) != mask.ndim:
+        print(
+            f"Warning: spacing {spacing} has {len(spacing)} axes but the "
+            f"input mask has {mask.ndim}; falling back to isotropic spacing "
+            "for this image.",
+            file=sys.stderr,
+        )
+        spacing = None
+
     want_radius = config.extraction.mask_radius
     want_preprocessed = (
         config.extraction.closing_iterations > 0 or config.extraction.fill_holes
@@ -394,7 +444,7 @@ def analyze_segmentation_mask(
     objects: list[ObjectResult] = []
 
     for object_id, bbox, crop in object_crops:
-        obj = _analyze_single_object(crop, config)
+        obj = _analyze_single_object(crop, config, spacing=spacing)
         offset = tuple(s.start for s in bbox)
 
         full_skeleton[bbox] = np.maximum(full_skeleton[bbox], obj.skeleton)
