@@ -19,7 +19,7 @@ class TestExtractionConfig:
         assert c.branch_text is False
         assert c.summary is True
         assert c.fractal_dimension is False
-        assert c.vessel_radius is False
+        assert c.mask_radius is False
 
     def test_custom_values(self):
         c = ExtractionConfig(
@@ -27,13 +27,13 @@ class TestExtractionConfig:
             branch_text=False,
             summary=False,
             fractal_dimension=True,
-            vessel_radius=True,
+            mask_radius=True,
         )
         assert c.branches is False
         assert c.branch_text is False
         assert c.summary is False
         assert c.fractal_dimension is True
-        assert c.vessel_radius is True
+        assert c.mask_radius is True
 
     def test_round_trip_dict(self):
         original = ExtractionConfig(
@@ -41,7 +41,7 @@ class TestExtractionConfig:
             branch_text=False,
             summary=True,
             fractal_dimension=True,
-            vessel_radius=False,
+            mask_radius=False,
         )
         restored = ExtractionConfig.from_dict(original.to_dict())
         assert restored == original
@@ -113,7 +113,7 @@ class TestOutputConfig:
 class TestPipelineConfig:
     def test_round_trip_dict(self):
         original = PipelineConfig(
-            extraction=ExtractionConfig(fractal_dimension=True, vessel_radius=True),
+            extraction=ExtractionConfig(fractal_dimension=True, mask_radius=True),
             output=OutputConfig(write_branch_csv=True, write_radius=True),
         )
         as_dict = original.to_dict()
@@ -204,7 +204,7 @@ class TestPipelineConfig:
 class TestConfigFileIO:
     def test_save_and_load_round_trip(self, tmp_path):
         config = PipelineConfig(
-            extraction=ExtractionConfig(vessel_radius=True),
+            extraction=ExtractionConfig(mask_radius=True),
             output=OutputConfig(write_skeleton_png=True, write_radius=True),
         )
         path = tmp_path / "config.json"

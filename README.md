@@ -25,13 +25,15 @@ maskel run --input /path/to/images --config config.json --out outputs
 
 A config JSON can also be exported from the [napari-maskel](https://github.com/bionetslab/napari-maskel) plugin's **Save Config** button and used here directly — both consume the same schema (see below).
 
+Input images can be either a plain binary segmentation mask, or a multi-object instance segmentation map (more than one distinct nonzero value). In the latter case, every object is skeletonized independently — touching-but-distinct objects are correctly kept separate rather than merged into one skeleton — and every output row is tagged with the `object_id` it came from (the mask's own label value; `1` for a plain binary mask).
+
 CLI outputs:
 
-- `outputs/summary.csv` with one feature row per image
+- `outputs/summary.csv` with one feature row per object per image
 - Optional per-image skeleton outputs (default: `.npy`)
-- Optional per-image branch tables when `output.write_branch_csv=true`
-- Optional per-image node tables when `output.write_node_csv=true`
-- Optional per-image skeleton graphs when `output.write_graphml=true`
+- Optional per-image branch tables when `output.write_branch_csv=true` (includes an `object_id` column)
+- Optional per-image node tables when `output.write_node_csv=true` (includes an `object_id` column)
+- Optional per-object skeleton graphs when `output.write_graphml=true` (one `_<object_id>_graph.graphml` file per object)
 
 ## Configuration
 
@@ -39,7 +41,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "extraction": {
     "branches": false,
     "branch_color_property": "tortuosity",
@@ -47,7 +49,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
     "nodes": false,
     "summary": true,
     "fractal_dimension": false,
-    "vessel_radius": false,
+    "mask_radius": false,
     "junction_cleanup": false,
     "cleanup_threshold_factor": 2.5,
     "prune_spurs": false,
@@ -73,12 +75,12 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `extraction.branches` | bool | `false` | Extract per-branch features for CSV export or napari visualization |
-| `extraction.branch_color_property` | str | `"tortuosity"` | Branch property used to color the napari shapes layer; one of `tortuosity`, `straightness`, `mean_radius`, `std_radius`, `volume`, `surface_area`, ... |
+| `extraction.branch_color_property` | str | `"tortuosity"` | Branch property used to color the napari shapes layer; one of `object_id`, `tortuosity`, `straightness`, `mean_radius`, `std_radius`, `volume`, `surface_area`, ... |
 | `extraction.branch_text` | bool | `false` | Display branch ID, length, and tortuosity labels on the napari branch layer |
 | `extraction.nodes` | bool | `false` | Extract per-node features for CSV export or napari visualization |
 | `extraction.summary` | bool | `true` | Compute summary features  |
 | `extraction.fractal_dimension` | bool | `false` | Compute fractal dimension of the skeleton |
-| `extraction.vessel_radius` | bool | `false` | Estimate vessel radius using EDT from the segmentation |
+| `extraction.mask_radius` | bool | `false` | Estimate mask radius using EDT from the segmentation |
 | `extraction.junction_cleanup` | bool | `false` | Clean up ambiguous junction pixels after thinning |
 | `extraction.cleanup_threshold_factor` | float | `2.5` | Sensitivity for junction cleanup (higher = larger cycles get collapsed) |
 | `extraction.prune_spurs` | bool | `false` | Remove short endpoint-to-junction branches (thinning spur artifacts) after skeletonization |
@@ -93,7 +95,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `output.write_summary_csv` | bool | `true` | Write aggregated per-image features to `summary.csv` |
 | `output.write_branch_csv` | bool | `false` | Write per-branch CSV tables (requires `extraction.branches`) |
 | `output.write_node_csv` | bool | `false` | Write per-node CSV tables (requires `extraction.nodes`) |
-| `output.write_radius` | bool | `false` | Write per-pixel radius matrix as `.npy` (requires `extraction.vessel_radius`) |
+| `output.write_radius` | bool | `false` | Write per-pixel radius matrix as `.npy` (requires `extraction.mask_radius`) |
 | `output.write_graphml` | bool | `false` | Write skeleton graph as `.graphml` per image (nodes = graph nodes, edges = branches) |
 
 ### Shell completions

@@ -8,9 +8,10 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 3
+CONFIG_SCHEMA_VERSION = 4
 
 COLORABLE_BRANCH_PROPERTIES = [
+    "object_id",
     "tortuosity",
     "branch-distance",
     "euclidean-distance",
@@ -49,7 +50,7 @@ class ExtractionConfig:
     nodes: bool = False
     summary: bool = True
     fractal_dimension: bool = False
-    vessel_radius: bool = False
+    mask_radius: bool = False
     junction_cleanup: bool = False
     cleanup_threshold_factor: float = 2.5
     prune_spurs: bool = False
@@ -68,7 +69,7 @@ class ExtractionConfig:
             "nodes": self.nodes,
             "summary": self.summary,
             "fractal_dimension": self.fractal_dimension,
-            "vessel_radius": self.vessel_radius,
+            "mask_radius": self.mask_radius,
             "junction_cleanup": self.junction_cleanup,
             "cleanup_threshold_factor": self.cleanup_threshold_factor,
             "prune_spurs": self.prune_spurs,

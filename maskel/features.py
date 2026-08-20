@@ -90,7 +90,10 @@ def fractal_dimension(skeleton: np.ndarray) -> tuple[float, float]:
     """
     binary = to_binary(skeleton)
     min_side = min(binary.shape)
-    max_exp = int(np.floor(np.log2(min_side // 4)))
+    scale_base = min_side // 4
+    if scale_base < 1:
+        return 0.0, 0.0
+    max_exp = int(np.floor(np.log2(scale_base)))
     if max_exp < 1:
         return 0.0, 0.0
 
