@@ -1,4 +1,4 @@
-"""Tests for vesskel._io."""
+"""Tests for maskel._io."""
 
 import csv
 
@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from skan import Skeleton, summarize
 
-from vesskel._io import save_analysis_outputs
-from vesskel.config import OutputConfig
-from vesskel.pipeline import AnalysisResult
+from maskel._io import save_analysis_outputs
+from maskel.config import OutputConfig
+from maskel.pipeline import AnalysisResult, ObjectResult
 
 
 class TestSaveAnalysisOutputs:
@@ -23,16 +23,29 @@ class TestSaveAnalysisOutputs:
         nodes: bool = False,
     ) -> AnalysisResult:
         skel = np.eye(10, dtype=np.uint8)
-        feat = {"n_branches": 4.0, "n_junctions": 1.0} if summary else {}
+        feat = (
+            {"n_branches": 4.0, "n_junctions": 1.0, "object_id": 1} if summary else {}
+        )
         rad = np.ones((10, 10), dtype=np.float64) if radius else None
-        brecs = [{"id": i, "len": float(i * 2)} for i in range(2)] if branches else []
-        nrecs = [{"id": i, "deg": i + 2} for i in range(2)] if nodes else []
+        brecs = (
+            [{"id": i, "len": float(i * 2), "object_id": 1} for i in range(2)]
+            if branches
+            else []
+        )
+        nrecs = (
+            [{"id": i, "deg": i + 2, "object_id": 1} for i in range(2)] if nodes else []
+        )
         return AnalysisResult(
             skeleton=skel,
-            layers=[],
-            summary_features=feat,
-            branch_records=brecs,
-            node_records=nrecs,
+            objects=[
+                ObjectResult(
+                    object_id=1,
+                    offset=(0, 0),
+                    summary_features=feat,
+                    branch_records=brecs,
+                    node_records=nrecs,
+                )
+            ],
             radius_matrix=rad,
         )
 
@@ -67,17 +80,17 @@ class TestSaveAnalysisOutputs:
         assert not (d / "img_skeleton.npy").exists()
         assert not (d / "img_skeleton.png").exists()
 
-    def test_3d_skeleton_with_png_raises(self, tmp_path):
+    def test_3d_skeleton_with_png_warns_and_skips(self, tmp_path, capsys):
         result = AnalysisResult(
             skeleton=np.ones((4, 4, 4), dtype=np.uint8),
-            layers=[],
-            summary_features={},
-            branch_records=[],
-            node_records=[],
+            objects=[],
         )
-        cfg = OutputConfig(write_skeleton_npy=False, write_skeleton_png=True)
-        with pytest.raises(ValueError, match="PNG skeleton output"):
-            save_analysis_outputs(tmp_path, "vol", result, cfg)
+        cfg = OutputConfig(write_skeleton_npy=True, write_skeleton_png=True)
+        save_analysis_outputs(tmp_path, "vol", result, cfg)
+        d = tmp_path / "vol"
+        assert not (d / "vol_skeleton.png").exists()
+        assert (d / "vol_skeleton.npy").exists()
+        assert "2D" in capsys.readouterr().err
 
     # -- branch CSV --------------------------------------------------------
 
@@ -149,6 +162,7 @@ class TestSaveAnalysisOutputs:
         assert len(rows) == 1
         assert rows[0]["image"] == "img"
         assert rows[0]["n_branches"] == "4.0"
+        assert rows[0]["object_id"] == "1"
 
     def test_skips_summary_when_empty_features(self, tmp_path):
         save_analysis_outputs(
@@ -230,26 +244,34 @@ class TestSaveAnalysisOutputs:
         branch_data = summarize(graph, separator="-")
         return AnalysisResult(
             skeleton=cross_skel,
-            layers=[],
-            summary_features={"num_nodes": float(len(branch_data))},
-            branch_records=[],
-            node_records=[],
-            graph=graph,
-            branch_data=branch_data,
+            objects=[
+                ObjectResult(
+                    object_id=1,
+                    offset=(0, 0),
+                    summary_features={
+                        "num_nodes": float(len(branch_data)),
+                        "object_id": 1,
+                    },
+                    branch_records=[],
+                    node_records=[],
+                    graph=graph,
+                    branch_data=branch_data,
+                )
+            ],
             radius_matrix=np.ones_like(cross_skel, dtype=np.float64) * 2.0,
         )
 
     def test_saves_graphml(self, tmp_path, graph_result):
         cfg = OutputConfig(write_graphml=True)
         save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert (tmp_path / "img" / "img_graph.graphml").exists()
+        assert (tmp_path / "img" / "img_1_graph.graphml").exists()
 
     def test_skips_graphml_when_disabled(self, tmp_path, graph_result):
         cfg = OutputConfig(write_graphml=False)
         save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert not (tmp_path / "img" / "img_graph.graphml").exists()
+        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()
 
     def test_skips_graphml_when_graph_missing(self, tmp_path):
         cfg = OutputConfig(write_graphml=True)
         save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        assert not (tmp_path / "img" / "img_graph.graphml").exists()
+        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()

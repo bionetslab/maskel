@@ -1,6 +1,6 @@
 import numpy as np
 
-from vesskel._utils import to_binary
+from maskel._utils import to_binary
 
 
 class TestToBinary:

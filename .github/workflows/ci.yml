@@ -38,22 +38,3 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests
-
-      - name: Verify version consistency
-        run: |
-          uv add PyYAML
-          uv run python - <<'PY'
-          import tomllib, yaml
-
-          with open("pyproject.toml", "rb") as f:
-              pkg_version = tomllib.load(f)["project"]["version"]
-          with open("vesskel/napari.yaml") as f:
-              manifest_version = yaml.safe_load(f)["version"]
-
-          if pkg_version != manifest_version:
-              raise SystemExit(
-                  f"Version mismatch: pyproject.toml={pkg_version}, "
-                  f"napari.yaml={manifest_version}"
-              )
-          print(f"Versions consistent: {pkg_version}")
-          PY

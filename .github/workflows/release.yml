@@ -39,20 +39,17 @@ jobs:
       - name: Run tests
         run: uv run pytest tests
 
-      - name: Bump version in pyproject.toml and napari.yaml
+      - name: Bump version in pyproject.toml
         id: bump_version
         env:
           BUMP_TYPE: ${{ github.event.inputs.bump }}
         run: |
-          uv add PyYAML
           uv run python - <<'PY'
           import os
           import re
-          import yaml
 
           bump = os.environ["BUMP_TYPE"]
 
-          # --- pyproject.toml ---
           with open("pyproject.toml", "r", encoding="utf-8") as f:
               content = f.read()
 
@@ -80,13 +77,6 @@ jobs:
           with open("pyproject.toml", "w", encoding="utf-8") as f:
               f.write(content)
 
-          # --- napari.yaml ---
-          with open("vesskel/napari.yaml", "r") as f:
-              manifest = yaml.safe_load(f)
-          manifest["version"] = new_version
-          with open("vesskel/napari.yaml", "w") as f:
-              yaml.dump(manifest, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"new_version={new_version}\n")
           PY
@@ -100,7 +90,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml
           git add uv.lock
-          git add vesskel/napari.yaml
           git commit -m "chore: release ${NEW_VERSION} [no ci]"
           git tag "${NEW_VERSION}"
           git push origin HEAD

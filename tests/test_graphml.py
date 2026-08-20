@@ -1,10 +1,12 @@
-"""Tests for vesskel.graphml GraphML export."""
+"""Tests for maskel.graphml GraphML export."""
+
+import xml.etree.ElementTree as ET
 
 import networkx as nx
 import numpy as np
 from skan import Skeleton
 
-from vesskel.graphml import build_networkx_graph, write_graphml
+from maskel.graphml import build_networkx_graph, write_graphml
 
 
 def _junction_endpoint_count(graph: Skeleton) -> int:
@@ -139,3 +141,97 @@ class TestWriteGraphml:
         G = nx.read_graphml(str(path), node_type=int)
         assert G.number_of_nodes() == 0
         assert G.number_of_edges() == 0
+
+    def test_yfiles_node_geometry_positions_nodes(self, tmp_path, cross_graph):
+        """Without yFiles geometry, yEd stacks every node at one spot and the
+        graph renders as a single square instead of the actual skeleton."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {
+            "g": "http://graphml.graphdrawing.org/xmlns",
+            "y": "http://www.yworks.com/xml/graphml",
+        }
+        geometries = {
+            int(node_el.get("id")): node_el.find(".//y:Geometry", ns)
+            for node_el in tree.findall(".//g:node", ns)
+        }
+        assert len(geometries) == _junction_endpoint_count(graph)
+        assert all(geom is not None for geom in geometries.values())
+
+        positions = {
+            (float(g.get("x")), float(g.get("y"))) for g in geometries.values()
+        }
+        assert len(positions) == len(geometries)  # nodes aren't stacked on each other
+        for node_id, geom in geometries.items():
+            row, col = graph.coordinates[node_id, 0], graph.coordinates[node_id, 1]
+            assert float(geom.get("y")) == row
+            assert float(geom.get("x")) == col
+
+    def test_no_long_attribute_types(self, tmp_path, cross_graph, cross_skel):
+        """yEd fails to import GraphML attributes typed ``long``; plain Python
+        ints must be written as ``int`` instead (networkx's default for
+        numpy int32/64, but ``long`` for plain Python ``int``)."""
+        graph, branch_data = cross_graph
+        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path, radius_matrix=radius_matrix)
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        attr_types = {
+            key_el.get("attr.type") for key_el in tree.findall(".//g:key", ns)
+        }
+        assert "long" not in attr_types
+
+    def test_no_long_attribute_type_for_int_summary_feature(
+        self, tmp_path, cross_graph
+    ):
+        """Graph-level (summary_features) ints, e.g. ``object_id``, must also
+        avoid the ``long`` attribute type yEd fails to import."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path, summary_features={"object_id": 1})
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        attr_types = {
+            key_el.get("attr.type") for key_el in tree.findall(".//g:key", ns)
+        }
+        assert "long" not in attr_types
+
+    def test_edge_ids_are_unique(self, tmp_path, cross_graph):
+        """networkx assigns each edge its MultiGraph key (0, 1, ... *per node
+        pair*) as its GraphML id, so distinct edges between different node
+        pairs all collide on id="0". yEd looks up edges by id and drops all
+        but one of a colliding set, hiding most of the graph."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        ids = [edge_el.get("id") for edge_el in tree.findall(".//g:edge", ns)]
+        assert len(ids) == len(branch_data)
+        assert len(set(ids)) == len(ids)
+
+    def test_yfiles_edge_geometry_present(self, tmp_path, cross_graph):
+        """Without yFiles edgegraphics data, yEd imports the edges but never
+        draws them, so the skeleton looks like disconnected node squares."""
+        graph, branch_data = cross_graph
+        path = tmp_path / "img_graph.graphml"
+        write_graphml(graph, branch_data, path)
+
+        tree = ET.parse(path)
+        ns = {
+            "g": "http://graphml.graphdrawing.org/xmlns",
+            "y": "http://www.yworks.com/xml/graphml",
+        }
+        edge_shapes = [
+            edge_el.find(".//y:PolyLineEdge", ns)
+            for edge_el in tree.findall(".//g:edge", ns)
+        ]
+        assert len(edge_shapes) == len(branch_data)
+        assert all(shape is not None for shape in edge_shapes)

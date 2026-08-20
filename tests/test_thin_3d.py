@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from skimage.morphology import skeletonize
 
-from vesskel.thin_3d import _MAX_DIM, thin_3d
+from maskel.thin_3d import _MAX_DIM, thin_3d
 
 
 def _cube_with_rod(n: int, rod_len: int) -> np.ndarray:

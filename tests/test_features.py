@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from skan import Skeleton, summarize
 
-from vesskel.features import (
+from maskel.features import (
     _EMPTY_FEATURES,
     build_vessel_graph,
     compute_radii,
@@ -10,6 +10,7 @@ from vesskel.features import (
     extract_node_features,
     extract_vessel_features,
     fractal_dimension,
+    per_segment_radii,
 )
 
 
@@ -119,6 +120,34 @@ class TestComputeRadii:
         assert radius_matrix[0, 0] == 0
         assert radius_matrix.dtype == np.float64
 
+    def test_anisotropic_spacing_scales_axis_aligned_distance(self):
+        # Rows 0 and 6 are background; rows 1-5 and every column are
+        # foreground, so the strip is unbounded along columns - the
+        # nearest background pixel to any interior point is directly
+        # above/below in the same column, making the expected physical
+        # distance exactly row_distance * row_spacing regardless of the
+        # column spacing.
+        binary = np.ones((7, 20), dtype=np.uint8)
+        binary[0, :] = 0
+        binary[6, :] = 0
+        skeleton = np.zeros((7, 20), dtype=np.uint8)
+        skeleton[3, 10] = 1
+
+        radius_matrix, stats = compute_radii(binary, skeleton, spacing=(1.5, 0.5))
+        assert radius_matrix[3, 10] == pytest.approx(3 * 1.5)
+        assert stats["mean_radius"] == pytest.approx(4.5)
+
+    def test_none_spacing_matches_isotropic_unit_spacing(self):
+        binary = np.ones((7, 7), dtype=np.uint8)
+        binary[0, :] = binary[-1, :] = binary[:, 0] = binary[:, -1] = 0
+        skeleton = np.zeros((7, 7), dtype=np.uint8)
+        skeleton[3, 3] = 1
+
+        rm_none, stats_none = compute_radii(binary, skeleton, spacing=None)
+        rm_unit, stats_unit = compute_radii(binary, skeleton, spacing=(1.0, 1.0))
+        np.testing.assert_allclose(rm_none, rm_unit)
+        assert stats_none == stats_unit
+
 
 class TestBuildVesselGraph:
     def test_returns_skeleton_instance(self):
@@ -126,6 +155,50 @@ class TestBuildVesselGraph:
         img[4, 2:6] = 1
         graph = build_vessel_graph(img)
         assert isinstance(graph, Skeleton)
+
+    def test_isotropic_spacing_scales_branch_length(self):
+        # 20-pixel straight horizontal line: 19 unit steps.
+        img = np.zeros((10, 30), dtype=np.uint8)
+        img[5, 5:25] = 1
+
+        graph_unit = build_vessel_graph(img)
+        data_unit = summarize(graph_unit, separator="-")
+
+        graph_scaled = build_vessel_graph(img, spacing=(2.0, 2.0))
+        data_scaled = summarize(graph_scaled, separator="-")
+
+        expected_unit_length = 19.0
+        assert data_unit["branch-distance"].iloc[0] == pytest.approx(
+            expected_unit_length
+        )
+        assert data_scaled["branch-distance"].iloc[0] == pytest.approx(
+            2.0 * expected_unit_length
+        )
+        # spacing doubles both distances identically, so tortuosity is
+        # unaffected.
+        assert data_scaled["euclidean-distance"].iloc[0] == pytest.approx(
+            2.0 * data_unit["euclidean-distance"].iloc[0]
+        )
+
+    def test_anisotropic_spacing_scales_axis_aligned_segment(self):
+        # 20-pixel straight horizontal line (varies along axis 1 only):
+        # 19 unit steps, so with spacing=(2.0, 0.5) each step is 0.5.
+        img = np.zeros((10, 30), dtype=np.uint8)
+        img[5, 5:25] = 1
+
+        graph = build_vessel_graph(img, spacing=(2.0, 0.5))
+        data = summarize(graph, separator="-")
+
+        expected_length = 19 * 0.5
+        assert data["branch-distance"].iloc[0] == pytest.approx(expected_length)
+        assert data["euclidean-distance"].iloc[0] == pytest.approx(expected_length)
+
+    def test_coordinates_unaffected_by_spacing(self):
+        img = np.zeros((8, 8), dtype=np.uint8)
+        img[4, 2:6] = 1
+        graph_unit = build_vessel_graph(img)
+        graph_scaled = build_vessel_graph(img, spacing=(3.0, 3.0))
+        np.testing.assert_array_equal(graph_unit.coordinates, graph_scaled.coordinates)
 
 
 class TestExtractVesselFeatures:
@@ -268,6 +341,24 @@ class TestExtractVesselFeatures:
             == np.count_nonzero(simple_cross) / simple_cross.size
         )
 
+    def test_vessel_area_scaled_by_spacing(
+        self, simple_cross, simple_cross_graph, simple_cross_branch_data
+    ):
+        features = extract_vessel_features(
+            simple_cross,
+            simple_cross_graph,
+            simple_cross_branch_data,
+            binary=simple_cross,
+            spacing=(2.0, 0.5),
+        )
+        expected_area = np.count_nonzero(simple_cross) * 2.0 * 0.5
+        assert features["vessel_area"] == pytest.approx(expected_area)
+        # vessel_area_fraction is a ratio - scaling cancels, no change.
+        assert (
+            features["vessel_area_fraction"]
+            == np.count_nonzero(simple_cross) / simple_cross.size
+        )
+
 
 class TestExtractNodeFeatures:
     @pytest.fixture
@@ -348,3 +439,96 @@ class TestExtractNodeFeatures:
         assert nodes[0]["is_endpoint"]
         assert nodes[-1]["is_endpoint"]
         assert all(n["is_pass_through"] or n["is_endpoint"] for n in nodes)
+
+
+class TestPerSegmentRadii:
+    """Cylinder-formula checks for the frustum-chain volume/surface_area fix."""
+
+    def _straight_line_graph(self, n_pixels=20):
+        img = np.zeros((10, 30), dtype=np.uint8)
+        img[5, 5 : 5 + n_pixels] = 1
+        graph = build_vessel_graph(img)
+        branch_data = summarize(graph, separator="-")
+        return img, graph, branch_data
+
+    def _diagonal_line_graph(self, n_pixels=20):
+        img = np.zeros((30, 30), dtype=np.uint8)
+        for i in range(n_pixels):
+            img[5 + i, 5 + i] = 1
+        graph = build_vessel_graph(img)
+        branch_data = summarize(graph, separator="-")
+        return img, graph, branch_data
+
+    def test_straight_line_cylinder_isotropic(self):
+        img, graph, branch_data = self._straight_line_graph(n_pixels=20)
+        radius_matrix = np.zeros_like(img, dtype=np.float64)
+        radius_matrix[img > 0] = 3.0
+        n = len(branch_data)
+
+        result = per_segment_radii(radius_matrix, graph, n)
+
+        expected_length = 19.0  # 20 pixels -> 19 unit steps
+        r = 3.0
+        expected_volume = np.pi * r**2 * expected_length
+        expected_surface = 2.0 * np.pi * r * expected_length
+        assert result["volume"][0] == pytest.approx(expected_volume)
+        assert result["surface_area"][0] == pytest.approx(expected_surface)
+
+    def test_straight_line_cylinder_anisotropic(self):
+        img, graph, branch_data = self._straight_line_graph(n_pixels=20)
+        radius_matrix = np.zeros_like(img, dtype=np.float64)
+        radius_matrix[img > 0] = 3.0
+        n = len(branch_data)
+        spacing = (2.0, 0.5)  # line varies along axis 1 only
+
+        result = per_segment_radii(radius_matrix, graph, n, spacing=spacing)
+
+        expected_length = 19 * 0.5
+        r = 3.0
+        expected_volume = np.pi * r**2 * expected_length
+        expected_surface = 2.0 * np.pi * r * expected_length
+        assert result["volume"][0] == pytest.approx(expected_volume)
+        assert result["surface_area"][0] == pytest.approx(expected_surface)
+
+    def test_diagonal_line_cylinder_isotropic(self):
+        img, graph, branch_data = self._diagonal_line_graph(n_pixels=20)
+        radius_matrix = np.zeros_like(img, dtype=np.float64)
+        radius_matrix[img > 0] = 2.0
+        n = len(branch_data)
+
+        result = per_segment_radii(radius_matrix, graph, n)
+
+        expected_length = 19 * np.sqrt(2.0)  # 19 diagonal unit steps
+        r = 2.0
+        expected_volume = np.pi * r**2 * expected_length
+        expected_surface = 2.0 * np.pi * r * expected_length
+        assert result["volume"][0] == pytest.approx(expected_volume)
+        assert result["surface_area"][0] == pytest.approx(expected_surface)
+
+    def test_diagonal_line_cylinder_anisotropic(self):
+        img, graph, branch_data = self._diagonal_line_graph(n_pixels=20)
+        radius_matrix = np.zeros_like(img, dtype=np.float64)
+        radius_matrix[img > 0] = 2.0
+        n = len(branch_data)
+        spacing = (2.0, 0.5)
+
+        result = per_segment_radii(radius_matrix, graph, n, spacing=spacing)
+
+        step_length = np.sqrt((1 * 2.0) ** 2 + (1 * 0.5) ** 2)
+        expected_length = 19 * step_length
+        r = 2.0
+        expected_volume = np.pi * r**2 * expected_length
+        expected_surface = 2.0 * np.pi * r * expected_length
+        assert result["volume"][0] == pytest.approx(expected_volume)
+        assert result["surface_area"][0] == pytest.approx(expected_surface)
+
+    def test_empty_branch_yields_nan(self):
+        img, graph, branch_data = self._straight_line_graph(n_pixels=20)
+        radius_matrix = np.zeros_like(img, dtype=np.float64)  # no positive radii
+        n = len(branch_data)
+
+        result = per_segment_radii(radius_matrix, graph, n)
+
+        assert np.isnan(result["volume"][0])
+        assert np.isnan(result["surface_area"][0])
+        assert np.isnan(result["mean_radius"][0])
