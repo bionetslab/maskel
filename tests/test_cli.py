@@ -232,11 +232,13 @@ class TestSaveSkeleton:
         assert loaded.shape == (8, 8)
         assert np.array_equal(loaded > 0, skeleton > 0)
 
-    def test_save_png_3d_raises(self, tmp_path):
+    def test_save_png_3d_warns_and_skips(self, tmp_path, capsys):
         path = tmp_path / "skel"
         skeleton = np.eye(4, dtype=np.uint8).reshape(4, 1, 4)
-        with pytest.raises(ValueError, match="PNG skeleton output"):
-            save_skeleton(path, skeleton, npy=False, png=True)
+        save_skeleton(path, skeleton, npy=True, png=True)
+        assert not path.with_suffix(".png").exists()
+        assert path.with_suffix(".npy").exists()
+        assert "2D" in capsys.readouterr().err
 
     def test_save_both_formats(self, tmp_path):
         path = tmp_path / "skel"

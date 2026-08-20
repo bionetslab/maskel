@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -67,9 +68,14 @@ def save_skeleton(
         np.save(path.with_suffix(".npy"), skeleton.astype(np.uint8))
     if png:
         if skeleton.ndim != 2:
-            raise ValueError("PNG skeleton output is only supported for 2D images")
-        img = Image.fromarray((skeleton > 0).astype(np.uint8) * 255)
-        img.save(path.with_suffix(".png"))
+            print(
+                "Warning: skipping PNG skeleton output for "
+                f"{path.with_suffix('.png')}: only supported for 2D images",
+                file=sys.stderr,
+            )
+        else:
+            img = Image.fromarray((skeleton > 0).astype(np.uint8) * 255)
+            img.save(path.with_suffix(".png"))
 
 
 def save_radius(path: Path, radius_matrix: np.ndarray) -> None:
