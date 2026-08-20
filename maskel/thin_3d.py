@@ -575,6 +575,8 @@ def thin_3d(img):
     """
     if img.ndim != 3:
         raise ValueError(f"Expected 3D input, got {img.ndim}D")
+    if img.min() != 0 or img.max() != 1:
+        raise ValueError("Input must be binary [0, 1]")
     if max(img.shape) > _MAX_DIM:
         raise ValueError(
             f"Volume too large for 3D thinning: shape={img.shape}. "
