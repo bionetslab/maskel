@@ -80,14 +80,17 @@ class TestSaveAnalysisOutputs:
         assert not (d / "img_skeleton.npy").exists()
         assert not (d / "img_skeleton.png").exists()
 
-    def test_3d_skeleton_with_png_raises(self, tmp_path):
+    def test_3d_skeleton_with_png_warns_and_skips(self, tmp_path, capsys):
         result = AnalysisResult(
             skeleton=np.ones((4, 4, 4), dtype=np.uint8),
             objects=[],
         )
-        cfg = OutputConfig(write_skeleton_npy=False, write_skeleton_png=True)
-        with pytest.raises(ValueError, match="PNG skeleton output"):
-            save_analysis_outputs(tmp_path, "vol", result, cfg)
+        cfg = OutputConfig(write_skeleton_npy=True, write_skeleton_png=True)
+        save_analysis_outputs(tmp_path, "vol", result, cfg)
+        d = tmp_path / "vol"
+        assert not (d / "vol_skeleton.png").exists()
+        assert (d / "vol_skeleton.npy").exists()
+        assert "2D" in capsys.readouterr().err
 
     # -- branch CSV --------------------------------------------------------
 
