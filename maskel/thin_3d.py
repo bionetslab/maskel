@@ -582,12 +582,11 @@ def thin_3d(img):
             "(voxel coordinates are stored as uint16)."
         )
 
-    work = (img > 0).astype(np.uint8, copy=False)
     padded = np.zeros(
-        (work.shape[0] + 2, work.shape[1] + 2, work.shape[2] + 2),
+        (img.shape[0] + 2, img.shape[1] + 2, img.shape[2] + 2),
         dtype=np.uint8,
     )
-    padded[1:-1, 1:-1, 1:-1] = work
+    padded[1:-1, 1:-1, 1:-1] = img
 
     out = _compute_thin_image(padded)
     return out[1:-1, 1:-1, 1:-1].copy()
