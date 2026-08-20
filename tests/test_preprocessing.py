@@ -162,3 +162,63 @@ class TestPreprocessedBinary:
         )
         result = analyze_segmentation_mask(img, config)
         assert result.preprocessed_binary is None
+
+
+class TestPreprocessedBinaryMultiObject:
+    """Despite its name, preprocessed_binary carries real object ids for a
+    multi-object instance segmentation map, not just 0/1 - see
+    analyze_segmentation_mask's stitching of full_preprocessed."""
+
+    def test_preserves_object_ids(self):
+        mask = np.zeros((16, 32), dtype=np.uint8)
+        mask[4:8, 4:8] = 5
+        mask[4:8, 20:24] = 9
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.preprocessed_binary is not None
+        assert (result.preprocessed_binary[4:8, 4:8] == 5).all()
+        assert (result.preprocessed_binary[4:8, 20:24] == 9).all()
+        assert (result.preprocessed_binary[0:4, 0:16] == 0).all()
+
+    def test_plain_binary_mask_still_reports_id_one(self):
+        img = np.zeros((16, 16), dtype=np.uint8)
+        img[8, 4:12] = 1
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(img, config)
+
+        assert result.preprocessed_binary is not None
+        foreground = result.preprocessed_binary[result.preprocessed_binary != 0]
+        assert (foreground == 1).all()
+
+    def test_dtype_matches_integer_input_mask(self):
+        mask = np.zeros((16, 16), dtype=np.int32)
+        mask[4:8, 4:8] = 5
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.preprocessed_binary.dtype == mask.dtype
+
+    def test_dtype_is_integer_for_non_integer_input_mask(self):
+        mask = np.zeros((16, 16), dtype=np.float64)
+        mask[4:8, 4:8] = 1.0
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert np.issubdtype(result.preprocessed_binary.dtype, np.integer)
