@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import pytest
+import tifffile
 from PIL import Image
 
 from maskel._io import (
@@ -17,7 +18,15 @@ from maskel.cli import _discover_input_paths
 from maskel.config import CONFIG_SCHEMA_VERSION, PipelineConfig
 
 HEAVY_MODULES = frozenset(
-    {"numpy", "PIL", "PIL.Image", "maskel.pipeline", "maskel._batch", "maskel._io"}
+    {
+        "numpy",
+        "PIL",
+        "PIL.Image",
+        "tifffile",
+        "maskel.pipeline",
+        "maskel._batch",
+        "maskel._io",
+    }
 )
 
 
@@ -163,13 +172,82 @@ class TestLoadImage:
         arr = load_image(path)
         assert arr.shape == (3, 4, 5)
 
-    def test_load_invalid_dimension_raises(self, tmp_path):
-        path = tmp_path / "bad.npy"
-        np.save(path, np.ones((2, 2, 2, 2), dtype=np.uint8))
+    def test_load_multipage_tiff_stacks_to_3d(self, tmp_path):
+        path = tmp_path / "vol.tif"
+        vol = np.zeros((6, 4, 5), dtype=np.uint8)
+        for z in range(6):
+            vol[z, z % 4, z % 5] = 255
+        frames = [Image.fromarray(sl) for sl in vol]
+        frames[0].save(path, save_all=True, append_images=frames[1:])
+        arr = load_image(path)
+        assert arr.shape == (6, 4, 5)
+        assert np.array_equal(arr, vol)
+
+    def test_load_single_page_tiff_stays_2d(self, tmp_path):
+        path = tmp_path / "flat.tif"
+        Image.fromarray(np.eye(7, dtype=np.uint8) * 255).save(path)
+        arr = load_image(path)
+        assert arr.shape == (7, 7)
+
+    def test_load_single_page_rgb_tiff_collapses_channels(self, tmp_path):
+        path = tmp_path / "rgb.tif"
+        rgb = np.zeros((4, 5, 3), dtype=np.uint8)
+        rgb[1, 2, 0] = 200
+        Image.fromarray(rgb, mode="RGB").save(path)
+        arr = load_image(path)
+        assert arr.shape == (4, 5)
+        assert arr[1, 2] == 200
+
+    def test_load_imagej_stack_with_singleton_channel(self, tmp_path):
+        """tifffile drops a 1-length channel axis, so ZCYX arrives as 3D."""
+        path = tmp_path / "hyper.tif"
+        vol = np.zeros((4, 1, 8, 9), dtype=np.uint8)
+        vol[2, 0, 3, 4] = 255
+        tifffile.imwrite(path, vol, imagej=True, metadata={"axes": "ZCYX"})
+        arr = load_image(path)
+        assert arr.shape == (4, 8, 9)
+        assert arr[2, 3, 4] == 255
+
+    def test_load_multichannel_stack_raises(self, tmp_path):
+        path = tmp_path / "multichan.tif"
+        tifffile.imwrite(
+            path,
+            np.zeros((4, 2, 8, 9), dtype=np.uint8),
+            imagej=True,
+            metadata={"axes": "ZCYX"},
+        )
         with pytest.raises(
-            ValueError, match=r"Expected 2D or 3D image, got shape=\(2, 2, 2, 2\)"
+            ValueError, match=r"Expected 2D or 3D image, got shape=\(4, 2, 8, 9\)"
         ):
             load_image(path)
+
+    def test_load_multipage_rgb_tiff_raises(self, tmp_path):
+        """A colour stack stays 4D: channels are only collapsed for 2D pages."""
+        path = tmp_path / "rgb_vol.tif"
+        vol = np.zeros((3, 4, 5, 3), dtype=np.uint8)
+        frames = [Image.fromarray(sl, mode="RGB") for sl in vol]
+        frames[0].save(path, save_all=True, append_images=frames[1:])
+        with pytest.raises(ValueError, match=r"Expected 2D or 3D image"):
+            load_image(path)
+
+    def test_load_compressed_tiff_stack(self, tmp_path):
+        """A codec Pillow cannot decode, so this only passes via tifffile."""
+        path = tmp_path / "zstd_vol.tif"
+        vol = (np.arange(3 * 4 * 5, dtype=np.uint8) % 2 * 255).reshape(3, 4, 5)
+        tifffile.imwrite(path, vol, compression="zstd", photometric="minisblack")
+        arr = load_image(path)
+        assert arr.shape == (3, 4, 5)
+        assert np.array_equal(arr, vol)
+
+    def test_load_tiff_does_not_use_pillow(self, tmp_path, monkeypatch):
+        """Guard the regression: Pillow's reader hands back page 0 only."""
+        path = tmp_path / "vol.tif"
+        tifffile.imwrite(path, np.zeros((7, 4, 5), dtype=np.uint8))
+        monkeypatch.setattr(
+            "maskel._io.Image.open",
+            lambda *a, **k: pytest.fail("TIFF must not be read through Pillow"),
+        )
+        assert load_image(path).shape == (7, 4, 5)
 
 
 class TestSanitizeForCsv:

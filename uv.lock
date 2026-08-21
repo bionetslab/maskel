@@ -459,6 +459,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "skan" },
+    { name = "tifffile" },
 ]
 
 [package.optional-dependencies]
@@ -484,6 +485,7 @@ requires-dist = [
     { name = "scikit-image", marker = "extra == 'dev'", specifier = ">=0.26.0" },
     { name = "scipy", specifier = ">=1.17.1" },
     { name = "skan", specifier = ">=0.13.1" },
+    { name = "tifffile", specifier = ">=2026.3.3" },
 ]
 provides-extras = ["dev"]
 
