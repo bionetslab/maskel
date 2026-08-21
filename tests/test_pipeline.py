@@ -449,3 +449,61 @@ class TestSpacing:
         assert result.summary_features[0]["fractal_dimension"] == 0.0
         captured = capsys.readouterr()
         assert "fractal" not in captured.err.lower()
+
+
+class TestProgressLogging:
+    """analyze_segmentation_mask logs a few progress markers via the
+    "maskel" logger (not print/stderr, unlike the warnings above) so
+    impatient users get feedback without any logging setup of their own."""
+
+    def _mask_with_two_objects(self):
+        mask = np.zeros((16, 32), dtype=np.uint8)
+        mask[4:8, 4:8] = 3
+        mask[4:8, 20:24] = 7
+        return mask
+
+    def test_logs_shape_and_spacing(self, caplog):
+        mask = self._mask_with_two_objects()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(spacing=(1.0, 0.5)), output=OutputConfig()
+        )
+        with caplog.at_level("INFO", logger="maskel"):
+            analyze_segmentation_mask(mask, config)
+
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "shape (16, 32)" in m and "spacing (1.0, 0.5)" in m for m in messages
+        )
+
+    def test_logs_object_count(self, caplog):
+        mask = self._mask_with_two_objects()
+        config = PipelineConfig(extraction=ExtractionConfig(), output=OutputConfig())
+        with caplog.at_level("INFO", logger="maskel"):
+            analyze_segmentation_mask(mask, config)
+
+        messages = [r.message for r in caplog.records]
+        assert any("Processing 2 object(s)" in m for m in messages)
+
+    def test_logs_completion_with_timing_even_for_empty_mask(self, caplog):
+        mask = np.zeros((8, 8), dtype=np.uint8)
+        config = PipelineConfig(extraction=ExtractionConfig(), output=OutputConfig())
+        with caplog.at_level("INFO", logger="maskel"):
+            result = analyze_segmentation_mask(mask, config)
+
+        assert result.objects == []
+        messages = [r.message for r in caplog.records]
+        assert any(m.startswith("Finished image of shape (8, 8) in") for m in messages)
+
+    def test_dimension_mismatch_warning_still_goes_to_stderr_not_the_logger(
+        self, caplog, capsys
+    ):
+        mask = self._mask_with_two_objects()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(spacing=(1.0, 1.0, 1.0)),
+            output=OutputConfig(),
+        )
+        with caplog.at_level("INFO", logger="maskel"):
+            analyze_segmentation_mask(mask, config)
+
+        assert not any("Warning:" in r.message for r in caplog.records)
+        assert "spacing" in capsys.readouterr().err.lower()

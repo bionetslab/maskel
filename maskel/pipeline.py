@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,24 @@ from maskel.thin import lee94_thin
 if TYPE_CHECKING:
     from pandas import DataFrame
     from skan import Skeleton
+
+# A dedicated logger (rather than bare print statements) so that progress
+# messages ("processing image of shape ...", object counts, timing) are
+# visible on stdout by default - without requiring the CLI or napari-maskel
+# to configure anything - while staying easy for either of them, or an
+# embedding application, to reconfigure or silence later (e.g. by adding a
+# root handler and calling logging.getLogger("maskel").propagate = True, or
+# just raising this logger's level). Guarded against adding a second handler
+# if this module is ever re-imported (e.g. importlib.reload in a notebook).
+# Left propagating (the logging default) rather than isolated, so pytest's
+# caplog - which attaches its capturing handler at the root logger - can see
+# these records in tests without extra setup.
+logger = logging.getLogger("maskel")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 # Printed at most once per process: box-counting fractal dimension is
 # invalid for anisotropic voxels, so it's forced to 0.0 whenever spacing is
@@ -416,13 +436,7 @@ def analyze_segmentation_mask(
     config : PipelineConfig
         Full pipeline configuration.
     """
-    object_crops = _iter_object_crops(mask)
-
-    if not object_crops:
-        return AnalysisResult(
-            skeleton=np.zeros(mask.shape, dtype=np.uint8),
-            objects=[],
-        )
+    t0 = time.perf_counter()
 
     spacing = config.extraction.spacing
     if spacing is not None and len(spacing) != mask.ndim:
@@ -433,6 +447,20 @@ def analyze_segmentation_mask(
             file=sys.stderr,
         )
         spacing = None
+
+    logger.info("Processing image of shape %s with spacing %s", mask.shape, spacing)
+
+    object_crops = _iter_object_crops(mask)
+    logger.info("Processing %d object(s)", len(object_crops))
+
+    if not object_crops:
+        logger.info(
+            "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
+        )
+        return AnalysisResult(
+            skeleton=np.zeros(mask.shape, dtype=np.uint8),
+            objects=[],
+        )
 
     want_radius = config.extraction.mask_radius
     want_preprocessed = (
@@ -498,6 +526,10 @@ def analyze_segmentation_mask(
                 radius_matrix=obj.radius_matrix,
             )
         )
+
+    logger.info(
+        "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
+    )
 
     return AnalysisResult(
         skeleton=full_skeleton,
