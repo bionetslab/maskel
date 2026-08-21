@@ -275,3 +275,20 @@ class TestSaveAnalysisOutputs:
         cfg = OutputConfig(write_graphml=True)
         save_analysis_outputs(tmp_path, "img", self._result(), cfg)
         assert not (tmp_path / "img" / "img_1_graph.graphml").exists()
+
+    # -- networkx pickle -----------------------------------------------------
+
+    def test_saves_networkx_pickle(self, tmp_path, graph_result):
+        cfg = OutputConfig(write_networkx_graph=True)
+        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
+        assert (tmp_path / "img" / "img_1_graph.pkl").exists()
+
+    def test_skips_networkx_pickle_when_disabled(self, tmp_path, graph_result):
+        cfg = OutputConfig(write_networkx_graph=False)
+        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
+        assert not (tmp_path / "img" / "img_1_graph.pkl").exists()
+
+    def test_skips_networkx_pickle_when_graph_missing(self, tmp_path):
+        cfg = OutputConfig(write_networkx_graph=True)
+        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
+        assert not (tmp_path / "img" / "img_1_graph.pkl").exists()

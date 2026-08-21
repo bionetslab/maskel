@@ -1,7 +1,8 @@
-"""GraphML export for vessel skeleton graphs."""
+"""GraphML and pickled-networkx export for vessel skeleton graphs."""
 
 from __future__ import annotations
 
+import pickle
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -53,14 +54,16 @@ def _as_graphml_value(value: object) -> object:
     return value
 
 
-def _edge_attributes(row: dict[str, object]) -> dict[str, object]:
+def _edge_attributes(
+    row: dict[str, object], *, graphml_safe: bool
+) -> dict[str, object]:
     return {
-        key: _as_graphml_value(value)
+        key: (_as_graphml_value(value) if graphml_safe else value)
         for key, value in row.items()
         if not key.startswith("coord-")
         and not key.startswith("image-coord-")
         and key not in _EXCLUDED_COLUMNS
-        and not _is_missing(value)
+        and (not graphml_safe or not _is_missing(value))
     }
 
 
@@ -69,13 +72,14 @@ def build_networkx_graph(
     branch_data,
     summary_features: dict[str, float] | None = None,
     radius_matrix: np.ndarray | None = None,
+    *,
+    graphml_safe: bool = True,
 ) -> nx.MultiGraph:
     """Convert a skan skeleton graph into a networkx MultiGraph.
 
     Nodes carry coordinates, degree, node-type flags, and ``radius`` (when
     *radius_matrix* is provided). Edges carry the per-branch features from
-    *branch_data*. NaN/Inf attributes are omitted. *summary_features* is
-    attached as graph-level attributes.
+    *branch_data*. *summary_features* is attached as graph-level attributes.
 
     Parameters
     ----------
@@ -88,19 +92,34 @@ def build_networkx_graph(
     radius_matrix : ndarray, optional
         EDT radius array from ``compute_radii``; radius at each node is
         attached as a ``radius`` node attribute when provided.
+    graphml_safe : bool
+        When True (the default, used for ``write_graphml``), NaN/Inf
+        attributes are omitted and plain Python ints are coerced to a
+        fixed-width numpy type - both required for the GraphML writer /
+        yEd compatibility (see ``_is_missing``/``_as_graphml_value``).
+        When False (used by ``write_networkx_pickle``, which has no such
+        restrictions), every computed attribute is kept exactly as-is,
+        NaN included, since a pickle preserves the real Python object
+        rather than a text/XML serialization of it.
     """
     G = skeleton_to_nx(graph, branch_data)
     G.graph.clear()
 
-    for summary in (summary_features or {}).items():
-        if not _is_missing(summary[1]):
-            G.graph[summary[0]] = _as_graphml_value(summary[1])
+    def _keep(value: object) -> bool:
+        return not graphml_safe or not _is_missing(value)
+
+    def _coerce(value: object) -> object:
+        return _as_graphml_value(value) if graphml_safe else value
+
+    for key, value in (summary_features or {}).items():
+        if _keep(value):
+            G.graph[key] = _coerce(value)
 
     for node_id in G.nodes():
         coords = graph.coordinates[node_id]
         degree = int(graph.degrees[node_id])
-        attrs = {f"coord_{d}": _as_graphml_value(int(c)) for d, c in enumerate(coords)}
-        attrs["degree"] = _as_graphml_value(degree)
+        attrs = {f"coord_{d}": _coerce(int(c)) for d, c in enumerate(coords)}
+        attrs["degree"] = _coerce(degree)
         attrs["is_endpoint"] = degree == 1
         attrs["is_junction"] = degree >= 3
         attrs["is_pass_through"] = degree == 2
@@ -113,7 +132,7 @@ def build_networkx_graph(
         G.add_edge(
             int(row["node-id-src"]),
             int(row["node-id-dst"]),
-            **_edge_attributes(row),
+            **_edge_attributes(row, graphml_safe=graphml_safe),
         )
 
     return G
@@ -246,3 +265,46 @@ def write_graphml(
     nx.write_graphml(G, str(path))
     if G.number_of_nodes() > 0:
         _add_yfiles_geometry(G, Path(path))
+
+
+def write_networkx_pickle(
+    graph: Skeleton,
+    branch_data,
+    path: str | Path,
+    *,
+    summary_features: dict[str, float] | None = None,
+    radius_matrix: np.ndarray | None = None,
+) -> None:
+    """Write a skeleton graph as a pickled networkx MultiGraph.
+
+    Unlike ``write_graphml`` (a text/XML format restricted to simple
+    scalar attribute types, and which drops NaN/Inf attributes since
+    GraphML can't represent them), this preserves the graph exactly as
+    built - every node/edge attribute ``build_networkx_graph`` computes,
+    NaN included, with native Python types rather than the fixed-width
+    numpy types GraphML/yEd require. Read back with
+    ``pickle.load(open(path, "rb"))``.
+
+    Parameters
+    ----------
+    graph : Skeleton
+        Pre-built skan Skeleton graph (e.g. from ``build_vessel_graph``).
+    branch_data : DataFrame
+        Pre-computed branch summary (e.g. from ``skan.summarize``).
+    path : str or Path
+        Destination file path.
+    summary_features : dict[str, float], optional
+        Per-image summary features attached as graph-level attributes.
+    radius_matrix : ndarray, optional
+        EDT radius array from ``compute_radii``; radius at each node is
+        attached as a ``radius`` node attribute when provided.
+    """
+    G = build_networkx_graph(
+        graph,
+        branch_data,
+        summary_features=summary_features,
+        radius_matrix=radius_matrix,
+        graphml_safe=False,
+    )
+    with open(path, "wb") as f:
+        pickle.dump(G, f)
