@@ -1,12 +1,13 @@
-"""Tests for maskel.graphml GraphML export."""
+"""Tests for maskel.graphml GraphML and pickled-networkx export."""
 
+import pickle
 import xml.etree.ElementTree as ET
 
 import networkx as nx
 import numpy as np
 from skan import Skeleton
 
-from maskel.graphml import build_networkx_graph, write_graphml
+from maskel.graphml import build_networkx_graph, write_graphml, write_networkx_pickle
 
 
 def _junction_endpoint_count(graph: Skeleton) -> int:
@@ -99,6 +100,35 @@ class TestBuildNetworkxGraph:
         assert G.number_of_nodes() == _junction_endpoint_count(graph)
         _, data = next(iter(G.nodes(data=True)))
         assert "coord_2" in data
+
+    def test_graphml_safe_false_keeps_nan_attributes(self, cross_graph):
+        graph, branch_data = cross_graph
+        branch_data = branch_data.copy()
+        branch_data["tortuosity"] = np.nan
+        G = build_networkx_graph(graph, branch_data, graphml_safe=False)
+
+        for _, _, data in G.edges(data=True):
+            assert "tortuosity" in data
+            assert np.isnan(data["tortuosity"])
+
+    def test_graphml_safe_false_keeps_native_int_types(self, cross_graph):
+        graph, branch_data = cross_graph
+        G = build_networkx_graph(
+            graph, branch_data, summary_features={"object_id": 1}, graphml_safe=False
+        )
+        assert type(G.graph["object_id"]) is int
+
+        _, data = next(iter(G.nodes(data=True)))
+        assert type(data["degree"]) is int
+
+    def test_graphml_safe_true_still_drops_nan_by_default(self, cross_graph):
+        graph, branch_data = cross_graph
+        branch_data = branch_data.copy()
+        branch_data["tortuosity"] = np.nan
+        G = build_networkx_graph(graph, branch_data)  # graphml_safe defaults to True
+
+        for _, _, data in G.edges(data=True):
+            assert "tortuosity" not in data
 
 
 class TestWriteGraphml:
@@ -235,3 +265,64 @@ class TestWriteGraphml:
         ]
         assert len(edge_shapes) == len(branch_data)
         assert all(shape is not None for shape in edge_shapes)
+
+
+class TestWriteNetworkxPickle:
+    def test_write_and_read_round_trip(self, tmp_path, cross_graph, cross_skel):
+        graph, branch_data = cross_graph
+        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        path = tmp_path / "img_graph.pkl"
+        write_networkx_pickle(
+            graph,
+            branch_data,
+            path,
+            summary_features={"total_length": 42.0},
+            radius_matrix=radius_matrix,
+        )
+
+        with open(path, "rb") as f:
+            G = pickle.load(f)
+
+        assert isinstance(G, nx.MultiGraph)
+        assert G.number_of_nodes() == _junction_endpoint_count(graph)
+        assert G.number_of_edges() == len(branch_data)
+        assert G.graph["total_length"] == 42.0
+
+        node_id, data = next(iter(G.nodes(data=True)))
+        assert data["coord_0"] == int(graph.coordinates[node_id, 0])
+        assert data["radius"] == 3.0
+        assert type(data["degree"]) is int
+
+    def test_nan_attributes_survive_the_round_trip(self, tmp_path, cross_graph):
+        graph, branch_data = cross_graph
+        branch_data = branch_data.copy()
+        branch_data["tortuosity"] = np.nan
+        path = tmp_path / "img_graph.pkl"
+        write_networkx_pickle(graph, branch_data, path)
+
+        with open(path, "rb") as f:
+            G = pickle.load(f)
+
+        for _, _, data in G.edges(data=True):
+            assert "tortuosity" in data
+            assert np.isnan(data["tortuosity"])
+
+    def test_parallel_edges_round_trip_as_multigraph(self, tmp_path, loop_graph):
+        graph, branch_data = loop_graph
+        path = tmp_path / "loop_graph.pkl"
+        write_networkx_pickle(graph, branch_data, path)
+
+        with open(path, "rb") as f:
+            G = pickle.load(f)
+        assert isinstance(G, nx.MultiGraph)
+        assert G.number_of_edges() == len(branch_data)
+
+    def test_empty_branch_data(self, tmp_path, cross_graph):
+        graph, branch_data = cross_graph
+        path = tmp_path / "empty_graph.pkl"
+        write_networkx_pickle(graph, branch_data.iloc[0:0], path)
+
+        with open(path, "rb") as f:
+            G = pickle.load(f)
+        assert G.number_of_nodes() == 0
+        assert G.number_of_edges() == 0

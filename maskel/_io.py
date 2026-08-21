@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from maskel.config import OutputConfig
-from maskel.graphml import write_graphml
+from maskel.graphml import write_graphml, write_networkx_pickle
 from maskel.pipeline import AnalysisResult
 
 
@@ -129,6 +129,18 @@ def save_analysis_outputs(
                 obj.graph,
                 obj.branch_data,
                 out / f"{base_name}_{obj.object_id}_graph.graphml",
+                summary_features=obj.summary_features or None,
+                radius_matrix=obj.radius_matrix,
+            )
+
+    if config.write_networkx_graph:
+        for obj in result.objects:
+            if obj.graph is None or obj.branch_data is None:
+                continue
+            write_networkx_pickle(
+                obj.graph,
+                obj.branch_data,
+                out / f"{base_name}_{obj.object_id}_graph.pkl",
                 summary_features=obj.summary_features or None,
                 radius_matrix=obj.radius_matrix,
             )
