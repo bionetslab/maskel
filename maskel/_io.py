@@ -9,6 +9,7 @@ from pathlib import Path
 
 import itk
 import numpy as np
+import tifffile
 from PIL import Image
 
 from maskel.config import OutputConfig
@@ -22,6 +23,8 @@ def load_image(path: Path) -> np.ndarray:
         arr = np.load(path)
     elif suffix == ".mhd":
         arr = np.asarray(itk.imread(str(path)))
+    elif suffix in (".tif", ".tiff"):
+        arr = np.asarray(tifffile.imread(str(path)))
     else:
         with Image.open(path) as im:
             arr = np.asarray(im)
