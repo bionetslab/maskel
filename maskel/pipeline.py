@@ -123,30 +123,80 @@ def preprocess_binary(
     Returns
     -------
     ndarray
-        Preprocessed binary array.
+        Preprocessed binary array, same dtype as *binary*.
+
+    Notes
+    -----
+    Keeps a single working array through closing/fill-holes instead of
+    round-tripping through *binary*'s original dtype after each step, and
+    avoids ever materializing the extra full-size int8 copies the previous
+    implementation used just to detect which voxels fill_holes changed
+    (``result > before_fill`` gives the same boolean mask directly, and
+    correctly - unlike ``~before_fill``, a bitwise-not on a non-bool array
+    doesn't mean logical negation). ``before_fill`` needs no explicit
+    ``.copy()`` either: ``binary_fill_holes`` never mutates its input in
+    place, so simply not reassigning over the old reference until a new
+    array exists already keeps the "before" snapshot alive.
+
+    This matters beyond avoiding a few small temporaries: on a large 3D
+    volume, connected-component labeling of the filled regions (used to
+    enforce *max_hole_size*) can by itself need far more peak memory than
+    any of maskel's own thinning methods do, since ``scipy.ndimage.label``
+    defaults to a 32-bit label array (4 bytes/voxel). ``_label_compact``
+    below tries a 16-bit array first, which is enough for realistic hole
+    counts and halves that allocation.
     """
+    if closing_iterations <= 0 and not fill_holes:
+        return binary
+
+    dtype = binary.dtype
+    result = binary
+
     if closing_iterations > 0:
-        structure = ndi.generate_binary_structure(binary.ndim, 1)
-        binary = ndi.binary_closing(
-            binary, structure=structure, iterations=closing_iterations
-        ).astype(binary.dtype)
+        structure = ndi.generate_binary_structure(result.ndim, 1)
+        result = ndi.binary_closing(
+            result, structure=structure, iterations=closing_iterations
+        )
 
     if fill_holes:
-        before_fill = binary.copy() if max_hole_size > 0 else None
-        binary = ndi.binary_fill_holes(binary).astype(binary.dtype)
+        before_fill = result if max_hole_size > 0 else None
+        result = ndi.binary_fill_holes(result)
 
         if max_hole_size > 0 and before_fill is not None:
-            diff = binary.astype(np.int8) - before_fill.astype(np.int8)
-            filled = diff > 0
+            filled = result > before_fill
+            del before_fill
             if filled.any():
-                labels, _ = ndi.label(filled)
+                labels, _ = _label_compact(filled)
+                del filled
                 sizes = np.bincount(labels.ravel())
                 big = sizes > max_hole_size
                 big[0] = False
-                revert = big[labels]
-                binary[revert] = 0
+                result[big[labels]] = False
 
-    return binary
+    return result.astype(dtype, copy=False)
+
+
+def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray, int]:
+    """``scipy.ndimage.label`` with the smallest label dtype that fits.
+
+    ``ndi.label`` defaults to a 32-bit label array, which for a large
+    volume is easily the single biggest allocation in
+    ``preprocess_binary``'s hole-filling path - well beyond what any of
+    the thinning methods downstream actually need. Enclosed-hole counts
+    are almost always small, so try *dtype* (16-bit by default) first and
+    only fall back to scipy's own default if there turn out to be more
+    distinct holes than it can represent. scipy raises ``RuntimeError``
+    rather than silently overflowing when a label id doesn't fit, so this
+    can never mislabel anything - only cost a re-run in that rare case.
+
+    *dtype* is a parameter (rather than hardcoded) so tests can force the
+    fallback path with a small, fast array instead of needing tens of
+    thousands of connected components to overflow the real 16-bit default.
+    """
+    try:
+        return ndi.label(mask, output=dtype)
+    except RuntimeError:
+        return ndi.label(mask)
 
 
 def _iter_object_crops(
