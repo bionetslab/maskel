@@ -1,7 +1,8 @@
 import numpy as np
+from scipy import ndimage as ndi
 
 from maskel.config import ExtractionConfig, OutputConfig, PipelineConfig
-from maskel.pipeline import analyze_segmentation_mask
+from maskel.pipeline import _label_compact, analyze_segmentation_mask, preprocess_binary
 
 
 class TestClosing:
@@ -231,3 +232,50 @@ class TestPreprocessedBinaryMultiObject:
         result = analyze_segmentation_mask(mask, config)
 
         assert np.issubdtype(result.preprocessed_binary.dtype, np.integer)
+
+
+class TestPreprocessBinaryNoOp:
+    def test_returns_same_object_when_nothing_requested(self):
+        binary = np.zeros((8, 8), dtype=np.uint8)
+        binary[2:6, 2:6] = 1
+
+        result = preprocess_binary(binary, closing_iterations=0, fill_holes=False)
+
+        assert result is binary
+
+
+class TestLabelCompact:
+    """`_label_compact` tries a smaller label dtype before falling back to
+    scipy's default - see its docstring in maskel/pipeline.py for why.
+    """
+
+    def test_matches_default_label_dtype(self):
+        mask = np.zeros((32, 32), dtype=bool)
+        mask[2:5, 2:5] = True
+        mask[10:14, 10:14] = True
+        mask[20:25, 5:9] = True
+
+        labels, num_features = _label_compact(mask)
+        expected_labels, expected_num_features = ndi.label(mask)
+
+        assert num_features == expected_num_features
+        np.testing.assert_array_equal(labels, expected_labels)
+
+    def test_falls_back_when_compact_dtype_overflows(self):
+        # One isolated foreground pixel per cell on a grid -- comfortably
+        # more connected components than an 8-bit label array can hold, to
+        # force the fallback path without needing scipy's real (16-bit)
+        # default to overflow.
+        mask = np.zeros((40, 40), dtype=bool)
+        mask[::2, ::2] = True
+        expected_num_components = int(mask.sum())
+        assert expected_num_components > np.iinfo(np.int8).max
+
+        labels, num_features = _label_compact(mask, dtype=np.int8)
+        expected_labels, expected_num_features = ndi.label(mask)
+
+        assert num_features == expected_num_components
+        assert num_features == expected_num_features
+        np.testing.assert_array_equal(labels, expected_labels)
+        # the fallback ran scipy's own default, not the overflowing dtype
+        assert labels.dtype != np.int8
