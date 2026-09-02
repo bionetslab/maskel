@@ -10,7 +10,7 @@ from ._utils import to_binary
 
 @njit(parallel=True, cache=True)
 def _box_count_2d(img: np.ndarray, scale: int) -> int:
-    """Count occupied boxes of side `scale` in a 2D binary image."""
+    """Count occupied boxes of size `scale` in a 2D binary image."""
     H, W = img.shape
     nh = (H + scale - 1) // scale
     nw = (W + scale - 1) // scale
@@ -36,7 +36,7 @@ def _box_count_2d(img: np.ndarray, scale: int) -> int:
 
 @njit(parallel=True, cache=True)
 def _box_count_3d(img: np.ndarray, scale: int) -> int:
-    """Count occupied boxes of side `scale` in a 3D binary volume."""
+    """Count occupied boxes of size `scale` in a 3D binary volume."""
     D, H, W = img.shape
     nd = (D + scale - 1) // scale
     nh = (H + scale - 1) // scale
