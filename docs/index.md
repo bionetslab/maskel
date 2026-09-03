@@ -8,7 +8,7 @@ Given a 2D or 3D segmentation mask — either a plain binary mask or a multi-obj
 
 1. Optionally preprocesses the binary mask (morphological closing, hole filling)
 2. Thins it to a 1-pixel/voxel skeleton (a fast, Numba-parallelized implementation of Lee et al. 1994 thinning)
-3. Builds a graph over the skeleton (nodes = junctions/endpoints, edges = branches)
+3. Builds a graph over the skeleton (edges = branches between junctions/endpoints; the raw node table before filtering covers every skeleton pixel, degree-2 pass-through points included — see [Node-level features](glossary.md#node-level-features-image_nodescsv))
 4. Optionally prunes short spur branches and cleans up ambiguous triangle junctions
 5. Extracts per-branch, per-node, and per-object summary features (length, tortuosity, radius, fractal dimension, ...)
 
