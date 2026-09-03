@@ -28,8 +28,9 @@ def prune_short_spurs(
         Branch summary from `skan.summarize(graph, ...)`, in the same row
         order as `graph`'s branches.
     min_length : float, optional
-        Branches shorter than this (``branch-distance``, in pixels)
-        qualify for removal. Default is 10.0.
+        Branches shorter than this (``branch-distance``) qualify for
+        removal - in pixel units, or physical units if `graph` was built
+        with a `spacing`. Default is 10.0.
 
     Returns
     -------
