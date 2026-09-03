@@ -1,4 +1,4 @@
-# Maskel
+# maskel
 
 [![PyPI version](https://img.shields.io/pypi/v/maskel.svg)](https://pypi.org/project/maskel/)
 [![Python version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
