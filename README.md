@@ -8,31 +8,7 @@ Skeletonization and graph-based feature extraction for branching biological stru
 
 Maskel is the core algorithm package: thinning, feature extraction, and the batch CLI. For the napari plugin, see [napari-maskel](https://github.com/bionetslab/napari-maskel). For benchmarks and the HRF-based analysis notebooks, see [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations).
 
-**Full documentation: https://bionetslab.github.io/maskel/**
-
-## Installation
-
-```sh
-uv sync                  # core only
-uv sync --extra dev      # + test tools
-```
-
-## Quick start
-
-```sh
-maskel init config.json
-maskel validate config.json
-maskel run --input /path/to/images --config config.json --out outputs
-```
-
-See the [full documentation](https://bionetslab.github.io/maskel/) for the complete config schema and CLI options.
-
-## Tests
-
-```sh
-uv sync --extra dev && pytest                     # all tests
-uv sync --extra dev && pytest -m "not slow"       # skip the slow 3D comparison test
-```
+## Full documentation: https://bionetslab.github.io/maskel/
 
 ## License
 
