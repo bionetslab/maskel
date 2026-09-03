@@ -25,7 +25,7 @@ maskel validate config.json
 maskel run --input /path/to/images --config config.json --out outputs
 ```
 
-See the [CLI Usage](https://bionetslab.github.io/maskel/cli/) and [Configuration Reference](https://bionetslab.github.io/maskel/configuration/) docs for the full config schema and CLI options.
+See the [full documentation](https://bionetslab.github.io/maskel/) for the complete config schema and CLI options.
 
 ## Tests
 

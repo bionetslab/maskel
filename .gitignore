@@ -209,3 +209,6 @@ __marimo__/
 .~lock.*
 
 *.pdf
+
+# Claude Code project instructions (local-only, not shared via the repo)
+CLAUDE.md

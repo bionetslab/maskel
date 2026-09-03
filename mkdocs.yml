@@ -35,8 +35,6 @@ theme:
 nav:
   - Home: index.md
   - Installation: installation.md
-  - CLI Usage: cli.md
-  - Configuration Reference: configuration.md
   - Glossary: glossary.md
   - napari-maskel ↗: https://bionetslab.github.io/napari-maskel/
 
