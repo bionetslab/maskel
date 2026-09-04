@@ -75,6 +75,34 @@ class TestBinaryGuard:
             thin_3d(vol)
 
 
+class TestUniformInput:
+    """A volume that's entirely background or entirely foreground has no
+    boundary to erode from - it short-circuits to an empty result instead
+    of tripping the strict binary-range check, which would otherwise reject
+    a perfectly valid (if degenerate) binary array just because min()==max().
+    """
+
+    def test_all_background_returns_empty(self):
+        vol = np.zeros((4, 4, 4), dtype=np.uint8)
+        result = thin_3d(vol)
+        assert result.shape == vol.shape
+        assert not result.any()
+
+    def test_all_foreground_returns_empty(self):
+        vol = np.ones((4, 4, 4), dtype=np.uint8)
+        result = thin_3d(vol)
+        assert result.shape == vol.shape
+        assert not result.any()
+
+    @pytest.mark.parametrize("value", [7, 255])
+    def test_uniform_non_binary_value_still_rejected(self, value):
+        # A uniform array isn't automatically "empty either way" - only 0
+        # and 1 are, so this must still hit the binary-range error.
+        vol = np.full((3, 3, 3), value, dtype=np.uint8)
+        with pytest.raises(ValueError, match="must be binary"):
+            thin_3d(vol)
+
+
 class TestForegroundSizedBuffers:
     def test_single_voxel_needs_one_candidate_slot(self):
         # Foreground count 1 is the smallest a valid volume can have, since a

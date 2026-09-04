@@ -343,6 +343,14 @@ def _analyze_single_object(
             radius_matrix=rm_temp,
             threshold_factor=config.extraction.cleanup_threshold_factor,
         )
+        if not skeleton.any():
+            return _ObjectResult(
+                skeleton=skeleton,
+                summary_features={},
+                branch_records=[],
+                node_records=[],
+                preprocessed_binary=preprocessed_binary,
+            )
 
     # -- build graph & branch data on the (potentially cleaned) skeleton -
     graph = build_vessel_graph(skeleton, spacing=spacing)
