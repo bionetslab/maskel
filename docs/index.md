@@ -116,6 +116,8 @@ A config JSON has two sections, `extraction` and `output` (plus a `schema_versio
 - `output.write_graphml` (bool, default `false`) — write the skeleton graph as `<image>_<object_id>_graph.graphml`, one file per object (nodes = graph nodes, edges = branches).
 - `output.write_networkx_graph` (bool, default `false`) — write the same graph as `<image>_<object_id>_graph.pkl`, a pickled `networkx.MultiGraph` — richer than GraphML (keeps NaN values and native Python types) but only readable from Python.
 
+An `output.write_*` flag set without its required `extraction.*` flag is rejected outright: both `maskel validate` and `maskel run --config` raise `ValueError` listing every mismatched pair, rather than silently writing nothing for that flag.
+
 ## Sharing a config with napari-maskel
 
 The same config JSON works in both directions: a file written by `maskel init` (or hand-edited, or produced by any earlier `maskel run`) can be loaded straight into the napari-maskel widget with **Load recipe**, and a config tuned interactively in the widget can be exported with **Save recipe** and passed to `maskel run --config` for reproducible batch processing — as in the multi-label example above. Both consume exactly the same schema described in Configurable parameters, since `maskel.config` is the single source of truth both projects import.

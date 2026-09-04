@@ -1,6 +1,6 @@
 # Installation
 
-Maskel requires Python 3.13+.
+Maskel requires Python 3.14+.
 
 ## From PyPI
 
