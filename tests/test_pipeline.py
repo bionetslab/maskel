@@ -539,3 +539,142 @@ class TestProgressLogging:
 
         assert not any("Warning:" in r.message for r in caplog.records)
         assert "spacing" in capsys.readouterr().err.lower()
+
+
+class TestPruneSpursIntegration:
+    """`prune_short_spurs` itself is unit-tested in isolation
+    (tests/test_spur_pruning.py); these exercise its pipeline integration -
+    the repeated-iteration loop, the graph rebuild between iterations, and
+    the "pruned everything away" early return - none of which that
+    standalone suite can reach."""
+
+    @staticmethod
+    def _y_of_y_mask() -> np.ndarray:
+        """A long main line with a junction (J1) that grows a second
+        junction (J2) via a short vertical branch, and J2 itself splits into
+        two short arms ending in endpoints.
+
+        Removing both of J2's short arms (each an endpoint-to-junction spur)
+        drops J2's degree from 3 to 1, turning it into an endpoint - which
+        only *then* makes the previously junction-to-junction J1-J2 branch
+        qualify as a spur too. A single pruning pass can't see that; a
+        second one is needed, which is exactly what `spur_iterations` is for.
+        """
+        img = np.zeros((40, 40), dtype=np.uint8)
+        img[20, 4:37] = 1  # main line, long enough on both sides of J1 to
+        # never itself qualify as a spur candidate
+        img[12:21, 20] = 1  # J1(20,20)-J2(12,20), length 8
+        img[12, 14:21] = 1  # J2's left arm, length 6
+        img[12, 20:27] = 1  # J2's right arm, length 6
+        return img
+
+    def test_single_iteration_leaves_the_newly_exposed_spur_in_place(self):
+        img = self._y_of_y_mask()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                branches=True,
+                summary=True,
+                prune_spurs=True,
+                min_spur_length=12.0,
+                spur_iterations=1,
+            ),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(img, config)
+
+        # J2's two short arms are gone, but the J1-J2 branch itself - only
+        # a spur *after* that removal - survives a single pass.
+        assert result.skeleton[12, 14:20].sum() == 0
+        assert result.skeleton[12, 21:27].sum() == 0
+        assert result.skeleton[12:21, 20].sum() > 1
+        assert len(result.objects[0].branch_records) == 3
+
+    def test_second_iteration_removes_the_newly_exposed_spur(self):
+        img = self._y_of_y_mask()
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                branches=True,
+                summary=True,
+                prune_spurs=True,
+                min_spur_length=12.0,
+                spur_iterations=2,
+            ),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(img, config)
+
+        # With the second pass, the J1-J2 stub is pruned back to just the
+        # one pixel `prune_short_spurs` always keeps for connectivity, and
+        # the main line - no longer forking anywhere - collapses to one
+        # branch.
+        assert result.skeleton[12:20, 20].sum() == 1
+        assert len(result.objects[0].branch_records) == 1
+
+    def test_pruning_everything_away_degrades_to_empty_result(self):
+        # A plain cross: every one of its four arms is an endpoint-to-
+        # junction spur relative to the center, so a large enough
+        # min_spur_length prunes all of them, leaving nothing - this must
+        # hit the pipeline's own empty-skeleton early return rather than
+        # crash trying to build a graph on a fully-collapsed skeleton.
+        img = np.zeros((32, 32), dtype=np.uint8)
+        img[16, 8:24] = 1
+        img[8:24, 16] = 1
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                branches=True, summary=True, prune_spurs=True, min_spur_length=20.0
+            ),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(img, config)
+
+        assert not result.skeleton.any()
+        assert result.objects[0].branch_records == []
+        assert result.objects[0].summary_features == {"object_id": 1}
+
+
+class TestDegenerateObjectShapes:
+    """Objects whose bounding box leaves no room for `_iter_object_crops`'
+    own padding, or whose thinned skeleton has no possible graph edge at
+    all - both previously untested, and the single-pixel case was an
+    actual crash (skan.Skeleton cannot build a graph with zero edges) until
+    `_skeleton_has_no_branches` started gating it the same way an
+    all-background skeleton already was."""
+
+    def test_single_pixel_object_degrades_gracefully_instead_of_crashing(self):
+        mask = np.zeros((10, 10), dtype=np.uint8)
+        mask[5, 5] = 1
+        config = PipelineConfig(
+            extraction=ExtractionConfig(branches=True, nodes=True, summary=True),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.skeleton[5, 5] == 1
+        assert result.objects[0].branch_records == []
+        assert result.objects[0].node_records == []
+        assert result.objects[0].summary_features == {"object_id": 1}
+
+    def test_object_touching_every_array_edge_forces_the_bbox_clamp(self):
+        # A square ring spanning the whole canvas: every side of
+        # `_iter_object_crops`' padded bounding box has nowhere to expand
+        # into, so `slice(max(s.start - 1, 0), min(s.stop + 1, dim))`
+        # actually clamps on all four sides rather than padding normally.
+        mask = np.zeros((20, 20), dtype=np.uint8)
+        mask[0, :] = 1
+        mask[-1, :] = 1
+        mask[:, 0] = 1
+        mask[:, -1] = 1
+        config = PipelineConfig(
+            extraction=ExtractionConfig(branches=True, summary=True),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.skeleton.shape == mask.shape
+        assert result.skeleton.any()
+        assert result.objects[0].summary_features["object_id"] == 1

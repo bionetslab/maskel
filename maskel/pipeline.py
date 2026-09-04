@@ -219,6 +219,26 @@ def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray
         return ndi.label(mask)
 
 
+def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
+    """True when no two foreground pixels in *skeleton* are adjacent (full
+    connectivity), i.e. every "branch" is an isolated single pixel.
+
+    ``skan.Skeleton`` (via ``build_vessel_graph``) requires at least one
+    graph edge to build its sparse path matrix and raises a low-level
+    ``ValueError`` from inside scipy.sparse otherwise - this is checked
+    for up front so a degenerate but perfectly valid input (e.g. a
+    single-pixel object, or a mask whose thinned skeleton happens to
+    leave only isolated points) degrades to the same empty-result path as
+    an all-background skeleton, rather than crashing.
+    """
+    if not skeleton.any():
+        return True
+    structure = ndi.generate_binary_structure(skeleton.ndim, skeleton.ndim)
+    labels, _ = ndi.label(skeleton > 0, structure=structure)
+    sizes = np.bincount(labels.ravel())[1:]  # drop the background (label 0) count
+    return bool(sizes.max() <= 1)
+
+
 def _iter_object_crops(
     mask: np.ndarray,
 ) -> list[tuple[int, tuple[slice, ...], np.ndarray]]:
@@ -325,7 +345,7 @@ def _analyze_single_object(
 
     skeleton = lee94_thin(binary)
 
-    if not skeleton.any():
+    if _skeleton_has_no_branches(skeleton):
         return _ObjectResult(
             skeleton=skeleton,
             summary_features={},
@@ -343,7 +363,7 @@ def _analyze_single_object(
             radius_matrix=rm_temp,
             threshold_factor=config.extraction.cleanup_threshold_factor,
         )
-        if not skeleton.any():
+        if _skeleton_has_no_branches(skeleton):
             return _ObjectResult(
                 skeleton=skeleton,
                 summary_features={},
@@ -373,7 +393,7 @@ def _analyze_single_object(
                 pre_prune_branch_data,
                 min_length=config.extraction.min_spur_length,
             )
-            if not skeleton.any():
+            if _skeleton_has_no_branches(skeleton):
                 return _ObjectResult(
                     skeleton=skeleton,
                     summary_features={},
