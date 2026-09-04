@@ -239,6 +239,38 @@ def _place_cross(
     mask[r0 : r0 + size, c0 + mid] = object_id
 
 
+class TestJunctionCleanupGuard:
+    """junction_cleanup can legitimately collapse an object's entire skeleton
+    (a small isolated cycle with a generous cleanup_threshold_factor) - this
+    must degrade to an empty result like every other empty-skeleton path,
+    not crash inside skan/scipy trying to build a graph with zero edges."""
+
+    def test_fully_collapsible_ring_returns_empty_instead_of_crashing(self):
+        # A small, isolated 4x4 ring: skan/collapse_triangle_junctions sees
+        # this as a single small cycle, which a generous threshold_factor
+        # collapses entirely, leaving zero edges.
+        img = np.zeros((20, 20), dtype=np.uint8)
+        img[8:12, 8] = 1
+        img[8:12, 11] = 1
+        img[8, 8:12] = 1
+        img[11, 8:12] = 1
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                summary=True,
+                junction_cleanup=True,
+                cleanup_threshold_factor=100.0,
+            ),
+            output=OutputConfig(),
+        )
+
+        result = analyze_segmentation_mask(img, config)
+
+        assert not result.skeleton.any()
+        assert result.branch_records == []
+        assert result.objects[0].summary_features == {"object_id": 1}
+
+
 class TestMultiObject:
     @pytest.fixture
     def two_objects_mask(self) -> np.ndarray:
