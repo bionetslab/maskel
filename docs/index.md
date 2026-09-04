@@ -24,7 +24,7 @@ This is an example of running maskel on a 2D binary segmentation mask. The data 
 
 ![HRF retinal vessel output, colored by mean branch radius](assets/screenshots/hrf-2d-output.png)
 
-The extracted skeleton, colored here by each branch's mean radius (`mean_radius` in `<image>_branches.csv`) — rendered from the exported branch CSV for illustration, since maskel's CLI itself only writes data (CSVs, arrays, graphs), not images. Use the exported `.graphml`/`.pkl` graph, or [napari-maskel](https://bionetslab.github.io/napari-maskel/), to visualize interactively.
+The extracted skeleton, colored here by each branch's mean radius (`mean_radius` in `<image>_branches.csv`) — rendered from the exported branch CSV for illustration, since maskel's CLI itself only writes the raw skeleton mask (optionally as a PNG, for 2D input) and data (CSVs, arrays, graphs) — never a rendered/annotated visualization like this one. Use the exported `.graphml`/`.pkl` graph, or [napari-maskel](https://bionetslab.github.io/napari-maskel/), to visualize interactively.
 
 ### 2D multi-label mask
 

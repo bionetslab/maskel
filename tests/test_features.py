@@ -4,11 +4,11 @@ from skan import Skeleton, summarize
 
 from maskel.features import (
     _EMPTY_FEATURES,
-    build_vessel_graph,
+    build_skeleton_graph,
     compute_radii,
     compute_tortuosity,
     extract_node_features,
-    extract_vessel_features,
+    extract_summary_features,
     fractal_dimension,
     per_segment_radii,
 )
@@ -153,7 +153,7 @@ class TestBuildVesselGraph:
     def test_returns_skeleton_instance(self):
         img = np.zeros((8, 8), dtype=np.uint8)
         img[4, 2:6] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         assert isinstance(graph, Skeleton)
 
     def test_isotropic_spacing_scales_branch_length(self):
@@ -161,10 +161,10 @@ class TestBuildVesselGraph:
         img = np.zeros((10, 30), dtype=np.uint8)
         img[5, 5:25] = 1
 
-        graph_unit = build_vessel_graph(img)
+        graph_unit = build_skeleton_graph(img)
         data_unit = summarize(graph_unit, separator="-")
 
-        graph_scaled = build_vessel_graph(img, spacing=(2.0, 2.0))
+        graph_scaled = build_skeleton_graph(img, spacing=(2.0, 2.0))
         data_scaled = summarize(graph_scaled, separator="-")
 
         expected_unit_length = 19.0
@@ -186,7 +186,7 @@ class TestBuildVesselGraph:
         img = np.zeros((10, 30), dtype=np.uint8)
         img[5, 5:25] = 1
 
-        graph = build_vessel_graph(img, spacing=(2.0, 0.5))
+        graph = build_skeleton_graph(img, spacing=(2.0, 0.5))
         data = summarize(graph, separator="-")
 
         expected_length = 19 * 0.5
@@ -196,8 +196,8 @@ class TestBuildVesselGraph:
     def test_coordinates_unaffected_by_spacing(self):
         img = np.zeros((8, 8), dtype=np.uint8)
         img[4, 2:6] = 1
-        graph_unit = build_vessel_graph(img)
-        graph_scaled = build_vessel_graph(img, spacing=(3.0, 3.0))
+        graph_unit = build_skeleton_graph(img)
+        graph_scaled = build_skeleton_graph(img, spacing=(3.0, 3.0))
         np.testing.assert_array_equal(graph_unit.coordinates, graph_scaled.coordinates)
 
 
@@ -211,7 +211,7 @@ class TestExtractVesselFeatures:
 
     @pytest.fixture
     def simple_cross_graph(self, simple_cross):
-        return build_vessel_graph(simple_cross)
+        return build_skeleton_graph(simple_cross)
 
     @pytest.fixture
     def simple_cross_branch_data(self, simple_cross_graph):
@@ -221,7 +221,7 @@ class TestExtractVesselFeatures:
     def cross_features(
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
-        return extract_vessel_features(
+        return extract_summary_features(
             simple_cross,
             simple_cross_graph,
             simple_cross_branch_data,
@@ -247,7 +247,7 @@ class TestExtractVesselFeatures:
         simple_cross_branch_data,
         include_fractal,
     ):
-        features = extract_vessel_features(
+        features = extract_summary_features(
             simple_cross,
             simple_cross_graph,
             simple_cross_branch_data,
@@ -276,7 +276,7 @@ class TestExtractVesselFeatures:
             "mean_segment_volume": 0.0,
             "mean_surface_area": 0.0,
         }
-        features = extract_vessel_features(
+        features = extract_summary_features(
             simple_cross,
             simple_cross_graph,
             simple_cross_branch_data,
@@ -289,9 +289,9 @@ class TestExtractVesselFeatures:
     def test_single_straight_line(self):
         img = np.zeros((8, 32), dtype=np.uint8)
         img[4, 4:28] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
-        features = extract_vessel_features(
+        features = extract_summary_features(
             img, graph, branch_data, binary=img, include_fractal=False
         )
         assert features["num_nodes"] == 2.0
@@ -302,7 +302,7 @@ class TestExtractVesselFeatures:
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
         empty_data = simple_cross_branch_data.iloc[0:0]
-        features = extract_vessel_features(
+        features = extract_summary_features(
             simple_cross, simple_cross_graph, empty_data, binary=simple_cross
         )
         for v in features.values():
@@ -311,9 +311,9 @@ class TestExtractVesselFeatures:
     def test_hgu_is_total_length_over_num_endpoints(self):
         img = np.zeros((8, 32), dtype=np.uint8)
         img[4, 4:28] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
-        features = extract_vessel_features(
+        features = extract_summary_features(
             img, graph, branch_data, binary=img, include_fractal=False
         )
         expected_hgu = features["total_length"] / features["num_endpoints"]
@@ -329,7 +329,7 @@ class TestExtractVesselFeatures:
     def test_vessel_area_from_binary(
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
-        features = extract_vessel_features(
+        features = extract_summary_features(
             simple_cross,
             simple_cross_graph,
             simple_cross_branch_data,
@@ -344,7 +344,7 @@ class TestExtractVesselFeatures:
     def test_vessel_area_scaled_by_spacing(
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
-        features = extract_vessel_features(
+        features = extract_summary_features(
             simple_cross,
             simple_cross_graph,
             simple_cross_branch_data,
@@ -370,7 +370,7 @@ class TestExtractNodeFeatures:
 
     @pytest.fixture
     def simple_cross_graph(self, simple_cross):
-        return build_vessel_graph(simple_cross)
+        return build_skeleton_graph(simple_cross)
 
     @pytest.fixture
     def simple_cross_branch_data(self, simple_cross_graph):
@@ -432,7 +432,7 @@ class TestExtractNodeFeatures:
     def test_works_with_single_straight_line(self):
         img = np.zeros((8, 32), dtype=np.uint8)
         img[4, 4:28] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
         nodes = extract_node_features(graph, branch_data)
         assert len(nodes) > 0
@@ -447,7 +447,7 @@ class TestPerSegmentRadii:
     def _straight_line_graph(self, n_pixels=20):
         img = np.zeros((10, 30), dtype=np.uint8)
         img[5, 5 : 5 + n_pixels] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
         return img, graph, branch_data
 
@@ -455,7 +455,7 @@ class TestPerSegmentRadii:
         img = np.zeros((30, 30), dtype=np.uint8)
         for i in range(n_pixels):
             img[5 + i, 5 + i] = 1
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
         return img, graph, branch_data
 

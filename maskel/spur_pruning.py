@@ -23,7 +23,7 @@ def prune_short_spurs(
     skeleton : ndarray
         Binary skeleton array the graph was built from.
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from `build_vessel_graph`).
+        Pre-built skan Skeleton graph (e.g. from `build_skeleton_graph`).
     branch_data : DataFrame
         Branch summary from `skan.summarize(graph, ...)`, in the same row
         order as `graph`'s branches.
