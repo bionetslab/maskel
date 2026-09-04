@@ -1,7 +1,7 @@
 import numpy as np
 from skan import summarize
 
-from maskel.features import build_vessel_graph
+from maskel.features import build_skeleton_graph
 from maskel.spur_pruning import prune_short_spurs
 
 
@@ -11,7 +11,7 @@ class TestPruneShortSpurs:
         img[16, 4:29] = 1  # long horizontal line through the junction
         img[13:17, 16] = 1  # short vertical spur (length 3) off the junction
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
 
         cleaned = prune_short_spurs(img, graph, branch_data, min_length=10.0)
@@ -29,7 +29,7 @@ class TestPruneShortSpurs:
         img[16, :] = 1
         img[:, 16] = 1
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
 
         cleaned = prune_short_spurs(img, graph, branch_data, min_length=10.0)
@@ -41,7 +41,7 @@ class TestPruneShortSpurs:
         img[16, 8:24] = 1
         img[8:24, 16] = 1
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
 
         cleaned = prune_short_spurs(img, graph, branch_data, min_length=10.0)
@@ -57,7 +57,7 @@ class TestPruneShortSpurs:
         img[9, 4:10] = 1
         img[4:10, 9] = 1
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
 
         cleaned = prune_short_spurs(img, graph, branch_data, min_length=10.0)
@@ -68,7 +68,7 @@ class TestPruneShortSpurs:
         img = np.zeros((8, 8), dtype=np.uint8)
         img[3, 3:6] = 1
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-").iloc[0:0]
         assert branch_data.empty
 
@@ -82,7 +82,7 @@ class TestPruneShortSpurs:
         img[16, 4:29] = 1
         img[13:17, 16] = 1  # spur of length 3
 
-        graph = build_vessel_graph(img)
+        graph = build_skeleton_graph(img)
         branch_data = summarize(graph, separator="-")
 
         # threshold below the spur's actual length -> nothing qualifies

@@ -8,6 +8,8 @@ Every feature maskel can extract, grouped by the level it's computed at and name
 
 One row per object per image. Requires `extraction.summary` (on by default); most fields need other options too, as noted.
 
+Every mask-derived field below (`vessel_area`, `vessel_area_fraction`, and the radius/diameter statistics) is measured against the mask *after* preprocessing — if `extraction.fill_holes` or `extraction.closing_iterations` is set, that's the morphologically-modified mask, not the raw input crop.
+
 - `object_id` — the mask's own label value for this object (`1` for a plain binary mask).
 - `num_nodes` — number of distinct graph nodes (junctions/endpoints) referenced by any branch in this object.
 - `num_edges` — number of branches (skeleton segments) in this object. Always computed alongside the summary, regardless of whether `extraction.branches` is also on.
@@ -23,7 +25,7 @@ One row per object per image. Requires `extraction.summary` (on by default); mos
 - `hgu` — "hyphal growth unit": `total_length / num_endpoints`. The average uninterrupted skeleton length per tip; higher means longer stretches between endpoints. **Spacing-aware** (inherits from `total_length`).
 - `mean_radius` / `std_radius` / `min_radius` / `max_radius` — statistics of the Euclidean-distance-transform radius, sampled at every skeleton pixel of this object (not per-branch — see the branch-level fields of the same name for that). Requires `extraction.mask_radius`. **Spacing-aware** (the EDT is computed with `spacing` as the pixel sampling distance).
 - `mean_diameter` / `std_diameter` / `min_diameter` / `max_diameter` — `2 ×` the radius statistics above. Same requirements and spacing-awareness.
-- `vessel_area` — foreground pixel/voxel count of this object's own (padded bounding-box) crop of the *original* binary mask, before thinning. Despite the name, this is an area in 2D and a volume in 3D. **Spacing-aware**: scaled by the pixel/voxel's physical area/volume (`spacing[0] * spacing[1] * ...`) when set.
+- `vessel_area` — foreground pixel/voxel count of this object's own (padded bounding-box) crop of the binary mask, before thinning (see note above on which mask). Despite the name, this is an area in 2D and a volume in 3D. **Spacing-aware**: scaled by the pixel/voxel's physical area/volume (`spacing[0] * spacing[1] * ...`) when set.
 - `vessel_area_fraction` — the same foreground count as a fraction (0–1) of the crop's total pixel/voxel count. A ratio, so unaffected by `spacing`.
 - `mean_segment_volume` — mean of the branch-level `volume` column (see below) across this object's branches. Requires `extraction.mask_radius`; `0.0` when there are no branches with a valid radius. **Spacing-aware.**
 - `mean_surface_area` — mean of the branch-level `surface_area` column across this object's branches. Same requirements and spacing-awareness.

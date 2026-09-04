@@ -84,7 +84,7 @@ def build_networkx_graph(
     Parameters
     ----------
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from ``build_vessel_graph``).
+        Pre-built skan Skeleton graph (e.g. from ``build_skeleton_graph``).
     branch_data : DataFrame
         Pre-computed branch summary (e.g. from ``skan.summarize``).
     summary_features : dict[str, float], optional
@@ -245,7 +245,7 @@ def write_graphml(
     Parameters
     ----------
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from ``build_vessel_graph``).
+        Pre-built skan Skeleton graph (e.g. from ``build_skeleton_graph``).
     branch_data : DataFrame
         Pre-computed branch summary (e.g. from ``skan.summarize``).
     path : str or Path
@@ -288,7 +288,7 @@ def write_networkx_pickle(
     Parameters
     ----------
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from ``build_vessel_graph``).
+        Pre-built skan Skeleton graph (e.g. from ``build_skeleton_graph``).
     branch_data : DataFrame
         Pre-computed branch summary (e.g. from ``skan.summarize``).
     path : str or Path

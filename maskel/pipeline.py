@@ -14,11 +14,12 @@ from skan import summarize
 
 from maskel.config import PipelineConfig
 from maskel.features import (
-    build_vessel_graph,
+    aggregate_segment_stats,
+    build_skeleton_graph,
     compute_radii,
     compute_tortuosity,
     extract_node_features,
-    extract_vessel_features,
+    extract_summary_features,
     per_segment_radii,
 )
 from maskel.junction_cleanup import collapse_triangle_junctions
@@ -353,7 +354,7 @@ def _analyze_single_object(
             )
 
     # -- build graph & branch data on the (potentially cleaned) skeleton -
-    graph = build_vessel_graph(skeleton, spacing=spacing)
+    graph = build_skeleton_graph(skeleton, spacing=spacing)
 
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction
@@ -381,7 +382,7 @@ def _analyze_single_object(
                     node_records=[],
                     preprocessed_binary=preprocessed_binary,
                 )
-            graph = build_vessel_graph(skeleton, spacing=spacing)
+            graph = build_skeleton_graph(skeleton, spacing=spacing)
 
     # -- optional: mask radius (EDT on the final skeleton) --------------
     radius_matrix = None
@@ -399,12 +400,7 @@ def _analyze_single_object(
             branch_data[key] = arr
 
         if radius_stats is not None:
-            radius_stats["mean_segment_volume"] = float(
-                np.nanmean(branch_data["volume"])
-            )
-            radius_stats["mean_surface_area"] = float(
-                np.nanmean(branch_data["surface_area"])
-            )
+            radius_stats.update(aggregate_segment_stats(branch_data))
 
     if not branch_data.empty:
         euclidean = branch_data["euclidean-distance"].to_numpy(dtype=float)
@@ -438,7 +434,7 @@ def _analyze_single_object(
 
     summary_features: dict[str, float] = {}
     if config.extraction.summary:
-        summary_features = extract_vessel_features(
+        summary_features = extract_summary_features(
             skeleton,
             graph,
             branch_data,

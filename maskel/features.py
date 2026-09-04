@@ -263,7 +263,7 @@ def per_segment_radii(
     }
 
 
-def build_vessel_graph(
+def build_skeleton_graph(
     skeleton: np.ndarray, spacing: tuple[float, ...] | None = None
 ) -> Skeleton:
     """Build a graph representation from a binary vessel skeleton.
@@ -357,7 +357,37 @@ _EMPTY_FEATURES: dict[str, float] = {
 }
 
 
-def extract_vessel_features(
+_RADIUS_STATS_DEFAULTS: dict[str, float] = {
+    "mean_radius": 0.0,
+    "std_radius": 0.0,
+    "min_radius": 0.0,
+    "max_radius": 0.0,
+    "mean_diameter": 0.0,
+    "std_diameter": 0.0,
+    "min_diameter": 0.0,
+    "max_diameter": 0.0,
+    "mean_segment_volume": 0.0,
+    "mean_surface_area": 0.0,
+}
+
+
+def aggregate_segment_stats(branch_data) -> dict[str, float]:
+    """Object-level aggregates of the per-branch ``volume``/``surface_area``
+    columns produced by `per_segment_radii` (mean across this object's
+    branches).
+
+    Requires *branch_data* to already carry those two columns (only true
+    after `per_segment_radii`'s output has been merged into it) and to be
+    non-empty - a caller that hasn't done that, or has no branches, should
+    not call this.
+    """
+    return {
+        "mean_segment_volume": float(np.nanmean(branch_data["volume"])),
+        "mean_surface_area": float(np.nanmean(branch_data["surface_area"])),
+    }
+
+
+def extract_summary_features(
     skeleton: np.ndarray,
     graph: Skeleton,
     branch_data,
@@ -375,7 +405,7 @@ def extract_vessel_features(
         Binary 2D or 3D skeleton array. Used only for fractal dimension
         computation, not for graph topology.
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from `build_vessel_graph`).
+        Pre-built skan Skeleton graph (e.g. from `build_skeleton_graph`).
     branch_data : DataFrame
         Pre-computed branch summary (e.g. from `skan.summarize(graph, ...)`).
     binary : ndarray
@@ -384,8 +414,18 @@ def extract_vessel_features(
     include_fractal : bool, optional
         Whether to compute fractal dimension (expensive-ish). Default is True.
     radius_stats : dict[str, float], optional
-        Pre-computed radius/diameter statistics from `compute_radii`.
-        When None, radius features default to zero.
+        Pre-computed radius/diameter statistics from `compute_radii`
+        (``mean_radius``, ``std_radius``, ``min_radius``, ``max_radius``,
+        ``mean_diameter``, ``std_diameter``, ``min_diameter``,
+        ``max_diameter``). Note ``compute_radii`` alone does *not* produce
+        ``mean_segment_volume``/``mean_surface_area`` - those are
+        branch-level aggregates from `aggregate_segment_stats`, which needs
+        `per_segment_radii`'s output merged into *branch_data* first. Any
+        key missing from *radius_stats* (including both of those, if you
+        only ran `compute_radii`) defaults to ``0.0`` rather than being
+        silently dropped from the returned dict - the schema is always the
+        same 10 keys regardless of what *radius_stats* actually supplies.
+        ``None`` defaults every one of them to ``0.0``.
     spacing : tuple[float, ...], optional
         Per-axis physical size of one pixel/voxel. When given, scales
         ``vessel_area`` from a raw pixel/voxel count into physical units
@@ -463,21 +503,11 @@ def extract_vessel_features(
 
     hgu = total_length / float(num_endpoints) if num_endpoints else 0.0
 
-    if radius_stats is not None:
-        radius = radius_stats
-    else:
-        radius = {
-            "mean_radius": 0.0,
-            "std_radius": 0.0,
-            "min_radius": 0.0,
-            "max_radius": 0.0,
-            "mean_diameter": 0.0,
-            "std_diameter": 0.0,
-            "min_diameter": 0.0,
-            "max_diameter": 0.0,
-            "mean_segment_volume": 0.0,
-            "mean_surface_area": 0.0,
-        }
+    radius_stats = radius_stats or {}
+    radius = {
+        key: radius_stats.get(key, default)
+        for key, default in _RADIUS_STATS_DEFAULTS.items()
+    }
 
     return {
         "num_nodes": float(num_nodes),

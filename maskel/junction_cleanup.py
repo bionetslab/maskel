@@ -1,3 +1,4 @@
+import warnings
 from typing import Any
 
 import networkx as nx
@@ -87,7 +88,12 @@ def collapse_triangle_junctions(
     try:
         G_simple = nx.Graph(G)
         cycles = nx.cycle_basis(G_simple)
-    except Exception:  # noqa: BLE001
+    except (nx.NetworkXException, KeyError, ValueError) as exc:
+        warnings.warn(
+            f"junction_cleanup: cycle detection failed ({exc!r}); "
+            "skipping cleanup for this object.",
+            stacklevel=2,
+        )
         return skeleton.copy().astype(np.uint8)
 
     if not cycles:
