@@ -3,7 +3,7 @@
 ##### Simon Wittmann, Dominik Pysch, Anna Möller
 
 [![PyPI version](https://img.shields.io/pypi/v/maskel.svg)](https://pypi.org/project/maskel/)
-[![Python version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
+[![Python version](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Skeletonization and graph-based feature extraction for branching biological structures — vasculature, fibers, neurites, and other network-like objects — from 2D or 3D binary or multi-label segmentation masks.
