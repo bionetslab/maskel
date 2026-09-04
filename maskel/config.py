@@ -40,6 +40,29 @@ def _warn_unknown_keys(known: set[str], data: dict[str, Any]) -> None:
         )
 
 
+# output.<flag> -> the extraction.<flag> it requires to actually produce
+# anything - without the paired extraction flag, the output flag is a
+# silent no-op (nothing is written, no error, no warning) rather than the
+# error a misconfigured "requires X" combination should be.
+_OUTPUT_REQUIRES_EXTRACTION = {
+    "write_branch_csv": "branches",
+    "write_node_csv": "nodes",
+    "write_radius": "mask_radius",
+}
+
+
+def _validate_output_requirements(
+    extraction: ExtractionConfig, output: OutputConfig
+) -> None:
+    problems = [
+        f"output.{out_flag}=true requires extraction.{req_flag}=true"
+        for out_flag, req_flag in _OUTPUT_REQUIRES_EXTRACTION.items()
+        if getattr(output, out_flag) and not getattr(extraction, req_flag)
+    ]
+    if problems:
+        raise ValueError("Invalid config:\n  " + "\n  ".join(problems))
+
+
 @dataclass
 class ExtractionConfig:
     """Configuration for what to extract from a skeleton."""
@@ -161,9 +184,13 @@ class PipelineConfig:
         if not isinstance(output_data, dict):
             raise TypeError("'output' must be an object")
 
+        extraction = ExtractionConfig.from_dict(extraction_data)
+        output = OutputConfig.from_dict(output_data)
+        _validate_output_requirements(extraction, output)
+
         return cls(
-            extraction=ExtractionConfig.from_dict(extraction_data),
-            output=OutputConfig.from_dict(output_data),
+            extraction=extraction,
+            output=output,
             schema_version=schema_version,
         )
 

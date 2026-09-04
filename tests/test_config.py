@@ -141,7 +141,9 @@ class TestOutputConfig:
 class TestPipelineConfig:
     def test_round_trip_dict(self):
         original = PipelineConfig(
-            extraction=ExtractionConfig(fractal_dimension=True, mask_radius=True),
+            extraction=ExtractionConfig(
+                branches=True, fractal_dimension=True, mask_radius=True
+            ),
             output=OutputConfig(write_branch_csv=True, write_radius=True),
         )
         as_dict = original.to_dict()
@@ -198,6 +200,55 @@ class TestPipelineConfig:
         }
         with pytest.raises(TypeError, match="'output' must be an object"):
             PipelineConfig.from_dict(data)
+
+    @pytest.mark.parametrize(
+        ("output_flag", "extraction_flag"),
+        [
+            ("write_branch_csv", "branches"),
+            ("write_node_csv", "nodes"),
+            ("write_radius", "mask_radius"),
+        ],
+    )
+    def test_from_dict_rejects_output_flag_without_matching_extraction_flag(
+        self, output_flag, extraction_flag
+    ):
+        data = {
+            "extraction": {},
+            "output": {output_flag: True},
+        }
+        with pytest.raises(
+            ValueError,
+            match=f"output.{output_flag}=true requires extraction.{extraction_flag}=true",
+        ):
+            PipelineConfig.from_dict(data)
+
+    def test_from_dict_reports_every_mismatched_pair_at_once(self):
+        data = {
+            "extraction": {},
+            "output": {
+                "write_branch_csv": True,
+                "write_node_csv": True,
+                "write_radius": True,
+            },
+        }
+        with pytest.raises(ValueError) as excinfo:
+            PipelineConfig.from_dict(data)
+        message = str(excinfo.value)
+        assert "write_branch_csv" in message
+        assert "write_node_csv" in message
+        assert "write_radius" in message
+
+    def test_from_dict_accepts_output_flag_with_matching_extraction_flag(self):
+        data = {
+            "extraction": {"branches": True, "nodes": True, "mask_radius": True},
+            "output": {
+                "write_branch_csv": True,
+                "write_node_csv": True,
+                "write_radius": True,
+            },
+        }
+        c = PipelineConfig.from_dict(data)  # must not raise
+        assert c.output.write_branch_csv is True
 
     def test_from_dict_missing_schema_version_defaults(self):
         data = {"extraction": {}, "output": {}}
