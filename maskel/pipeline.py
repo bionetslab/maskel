@@ -334,6 +334,26 @@ def _analyze_single_object(
             preprocessed_binary=preprocessed_binary,
         )
 
+    # skan's Skeleton() (used by both collapse_triangle_junctions below and
+    # build_vessel_graph further down) requires at least one edge - it
+    # crashes if every connected component of the skeleton is a single
+    # isolated pixel (no two foreground pixels adjacent anywhere). Lee94
+    # thinning legitimately produces isolated points (protected as
+    # endpoints), e.g. for a tiny/noisy object, so this isn't an error
+    # condition - just one with no graph to build. Detected cheaply by
+    # comparing the connected-component count against the foreground pixel
+    # count: they're equal exactly when every component has size 1.
+    full_connectivity = ndi.generate_binary_structure(skeleton.ndim, skeleton.ndim)
+    _, num_components = ndi.label(skeleton, structure=full_connectivity)
+    if num_components == np.count_nonzero(skeleton):
+        return _ObjectResult(
+            skeleton=skeleton,
+            summary_features={},
+            branch_records=[],
+            node_records=[],
+            preprocessed_binary=preprocessed_binary,
+        )
+
     # -- optional: collapse triangle junction artifacts -----------------
     # (requires EDT; done on the original skeleton before graph building)
     if config.extraction.junction_cleanup:

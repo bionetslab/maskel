@@ -1,12 +1,12 @@
-"""Unit tests for the 2D thinning kernel's input validation.
-
-Correctness against scikit-image's own Lee thinning is covered separately in
-tests/test_2d_skimage_comparison.py - this file covers thin_2d's own guards.
-"""
+"""Unit tests for the 2D thinning kernel: input validation and correctness
+against scikit-image's own Lee thinning."""
 
 import numpy as np
 import pytest
+from skimage import data
+from skimage.morphology import skeletonize
 
+from maskel.thin import lee94_thin
 from maskel.thin_2d import thin_2d
 
 
@@ -59,3 +59,28 @@ class TestUniformInput:
         img = np.full((3, 3), value, dtype=np.uint8)
         with pytest.raises(ValueError, match="must be binary"):
             thin_2d(img)
+
+
+@pytest.mark.slow
+class TestSkeletonizeComparison:
+    """Compare maskel.thin with scikit-image's Lee thinning on a real 2D
+    image - the 3D analogue of tests/test_3d_skimage_comparison.py. Nothing
+    in the suite previously verified the "2D output is bit-identical to
+    scikit-image" claim; only 3D had a real-data regression test."""
+
+    @pytest.fixture(scope="class")
+    def image(self):
+        # skimage's canonical binary 2D test image; ~ inverts it so the
+        # horse silhouette itself (not the background) is foreground.
+        return (~data.horse()).astype(np.uint8)
+
+    def test_maskel_vs_scikit_skeletonize_lee(self, image):
+        maskel_skel = lee94_thin(image)
+        scikit_skel = skeletonize(image, method="lee")
+
+        assert maskel_skel.shape == scikit_skel.shape, (
+            f"shape mismatch: maskel {maskel_skel.shape} vs scikit {scikit_skel.shape}"
+        )
+        assert np.array_equal(maskel_skel, scikit_skel.astype(np.uint8)), (
+            "skeleton mismatch: algorithms produce different results"
+        )
