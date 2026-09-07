@@ -149,7 +149,7 @@ class TestComputeRadii:
         assert stats_none == stats_unit
 
 
-class TestBuildVesselGraph:
+class TestBuildSkeletonGraph:
     def test_returns_skeleton_instance(self):
         img = np.zeros((8, 8), dtype=np.uint8)
         img[4, 2:6] = 1
@@ -201,7 +201,7 @@ class TestBuildVesselGraph:
         np.testing.assert_array_equal(graph_unit.coordinates, graph_scaled.coordinates)
 
 
-class TestExtractVesselFeatures:
+class TestExtractSummaryFeatures:
     @pytest.fixture
     def simple_cross(self):
         img = np.zeros((32, 32), dtype=np.uint8)
@@ -326,7 +326,7 @@ class TestExtractVesselFeatures:
             <= cross_features["max_length"]
         )
 
-    def test_vessel_area_from_binary(
+    def test_mask_area_from_binary(
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
         features = extract_summary_features(
@@ -335,13 +335,13 @@ class TestExtractVesselFeatures:
             simple_cross_branch_data,
             binary=simple_cross,
         )
-        assert features["vessel_area"] == np.count_nonzero(simple_cross)
+        assert features["mask_area"] == np.count_nonzero(simple_cross)
         assert (
-            features["vessel_area_fraction"]
+            features["mask_area_fraction"]
             == np.count_nonzero(simple_cross) / simple_cross.size
         )
 
-    def test_vessel_area_scaled_by_spacing(
+    def test_mask_area_scaled_by_spacing(
         self, simple_cross, simple_cross_graph, simple_cross_branch_data
     ):
         features = extract_summary_features(
@@ -352,10 +352,10 @@ class TestExtractVesselFeatures:
             spacing=(2.0, 0.5),
         )
         expected_area = np.count_nonzero(simple_cross) * 2.0 * 0.5
-        assert features["vessel_area"] == pytest.approx(expected_area)
-        # vessel_area_fraction is a ratio - scaling cancels, no change.
+        assert features["mask_area"] == pytest.approx(expected_area)
+        # mask_area_fraction is a ratio - scaling cancels, no change.
         assert (
-            features["vessel_area_fraction"]
+            features["mask_area_fraction"]
             == np.count_nonzero(simple_cross) / simple_cross.size
         )
 

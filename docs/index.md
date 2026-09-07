@@ -103,7 +103,7 @@ A config JSON has two sections, `extraction` and `output` (plus a `schema_versio
 ### Advanced features
 
 - `extraction.fractal_dimension` (bool, default `false`) — compute the skeleton's box-counting fractal dimension as a summary feature (see [Glossary](glossary.md)). Forced to `0.0` whenever `spacing` is set and anisotropic.
-- `extraction.mask_radius` (bool, default `false`) — estimate local vessel radius via a Euclidean distance transform of the segmentation. Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node) and for `output.write_radius`.
+- `extraction.mask_radius` (bool, default `false`) — estimate local radius via a Euclidean distance transform of the segmentation. Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node) and for `output.write_radius`.
 
 ### Output settings
 

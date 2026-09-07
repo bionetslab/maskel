@@ -390,7 +390,7 @@ def _analyze_single_object(
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction
     # (degree > 1), and the branch is shorter than the configured
-    # threshold - usually a thinning artifact rather than a real vessel
+    # threshold - usually a thinning artifact rather than a real branch
     # tip. Pruning changes the skeleton's pixels, so the graph is rebuilt
     # from scratch afterwards.)
     if config.extraction.prune_spurs:

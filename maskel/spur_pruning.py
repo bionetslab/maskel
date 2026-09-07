@@ -10,11 +10,11 @@ def prune_short_spurs(
     branch_data,
     min_length: float = 10.0,
 ) -> np.ndarray:
-    """Remove short spur branches from a vessel skeleton.
+    """Remove short spur branches from a skeleton.
 
     A spur is a branch that connects an endpoint (degree 1) directly to a
     junction (degree > 1) and is shorter than `min_length` - usually a
-    thinning artifact rather than a real vessel tip. Endpoint-endpoint
+    thinning artifact rather than a real branch tip. Endpoint-endpoint
     branches (isolated segments with no junction) and junction-junction
     branches are left untouched, since neither matches that degree pattern.
 

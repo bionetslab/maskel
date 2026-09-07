@@ -33,7 +33,7 @@ def collapse_triangle_junctions(
     radius_matrix: np.ndarray | None = None,
     threshold_factor: float = 2.5,
 ) -> np.ndarray:
-    """Collapse small cycles (triangle/diamond junction artifacts) in a vessel
+    """Collapse small cycles (triangle/diamond junction artifacts) in a
     skeleton into single centroid pixels.
 
     Parameters
@@ -42,7 +42,7 @@ def collapse_triangle_junctions(
         Binary skeleton array (``uint8`` or ``bool``).
     radius_matrix : ndarray, optional
         EDT radius array from `compute_radii`. When supplied, the
-        local vessel diameter is estimated from the radii at the cycle node
+        local diameter is estimated from the radii at the cycle node
         positions. Without it the diameter defaults to 1 pixel.
     threshold_factor : float, optional
         Cycles whose perimeter is less than
@@ -103,11 +103,11 @@ def collapse_triangle_junctions(
     # for each cycle we compute:
     #   a) perimeter - sum of Euclidean distances along the edge paths
     #      that form the cycle.
-    #   b) local vessel diameter - estimated from the EDT radius at each
+    #   b) local diameter - estimated from the EDT radius at each
     #      cycle node (if radius_matrix is available), otherwise default 1.
     #
-    # a legit vessel branch (like a bifurcation) will have a wide
-    # perimeter relative to the vessel diameter. A spurious triangle-
+    # a legit branch point (like a bifurcation) will have a wide
+    # perimeter relative to the local diameter. A spurious triangle-
     # or diamond-shaped junction artifact will be small and tight.
     # then use the ratio perimeter / diameter to tell them apart.
     perimeters: list[float] = []
@@ -125,14 +125,14 @@ def collapse_triangle_junctions(
                 break
             for key in G[u][v]:
                 path = G[u][v][key]["path"]
-                # sum euclidean dist of vessel segments
+                # sum euclidean dist of skeleton segments
                 diffs = np.diff(path.astype(np.float64), axis=0)
                 perim += float(np.sum(np.sqrt((diffs**2).sum(axis=1))))
                 break  # multigraph can have multiple edges, just take first one
 
         perimeters.append(perim)
 
-        # Estimate local vessel diameter from the EDT radius at each
+        # Estimate local diameter from the EDT radius at each
         # junction node. The radius_matrix holds the distance from
         # each foreground pixel to the nearest background pixel.
         # We take the mean radius and double it to get a diameter estimate.

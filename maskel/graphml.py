@@ -1,4 +1,4 @@
-"""GraphML and pickled-networkx export for vessel skeleton graphs."""
+"""GraphML and pickled-networkx export for skeleton graphs."""
 
 from __future__ import annotations
 

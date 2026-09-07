@@ -21,7 +21,7 @@ from maskel.config import (
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maskel",
-        description="Maskel CLI for batch-vessel-analysis.",
+        description="Maskel CLI for batch mask analysis.",
     )
     parser.add_argument(
         "--version",
