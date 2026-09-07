@@ -224,7 +224,7 @@ def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
     """True when no two foreground pixels in *skeleton* are adjacent (full
     connectivity), i.e. every "branch" is an isolated single pixel.
 
-    ``skan.Skeleton`` (via ``build_vessel_graph``, and via
+    ``skan.Skeleton`` (via ``build_skeleton_graph``, and via
     ``collapse_triangle_junctions``'s own call during junction cleanup)
     requires at least one graph edge to build its sparse path matrix and
     raises a low-level ``ValueError`` from inside scipy.sparse otherwise -
@@ -390,7 +390,7 @@ def _analyze_single_object(
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction
     # (degree > 1), and the branch is shorter than the configured
-    # threshold - usually a thinning artifact rather than a real vessel
+    # threshold - usually a thinning artifact rather than a real branch
     # tip. Pruning changes the skeleton's pixels, so the graph is rebuilt
     # from scratch afterwards.)
     if config.extraction.prune_spurs:
