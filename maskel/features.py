@@ -125,6 +125,8 @@ def compute_radii(
     binary: np.ndarray,
     skeleton: np.ndarray,
     spacing: tuple[float, ...] | None = None,
+    *,
+    edt: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, float]]:
     """Compute vessel radii via Euclidean distance transform of the binary mask.
 
@@ -141,6 +143,14 @@ def compute_radii(
     spacing : tuple[float, ...], optional
         Per-axis physical size of one pixel/voxel. ``None`` (the default)
         keeps isotropic unit spacing, matching scipy's own default.
+    edt : ndarray, optional
+        Pre-computed Euclidean distance transform of *binary* (same shape),
+        for a caller that already has one from an earlier call on this same
+        *binary* - e.g. the pipeline calling this once before junction
+        cleanup and again afterwards for the final radius matrix, where only
+        the skeleton positions being sampled change, not the underlying
+        mask. Computed internally via ``distance_transform_edt`` when not
+        given.
 
     Returns
     -------
@@ -151,9 +161,11 @@ def compute_radii(
         ``min_radius``, ``max_radius``, ``mean_diameter``, ``std_diameter``,
         ``min_diameter``, ``max_diameter``).
     """
-    edt = distance_transform_edt(binary, sampling=spacing)
+    if edt is None:
+        edt = distance_transform_edt(binary, sampling=spacing)
     radius_matrix = np.zeros_like(binary, dtype=np.float64)
-    radius_matrix[skeleton > 0] = edt[skeleton > 0]
+    skeleton_mask = skeleton > 0
+    radius_matrix[skeleton_mask] = edt[skeleton_mask]
 
     radii = radius_matrix[radius_matrix > 0]
     if radii.size:

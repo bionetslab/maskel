@@ -68,7 +68,7 @@ def save_skeleton(
     png: bool = False,
 ) -> None:
     if npy:
-        np.save(path.with_suffix(".npy"), skeleton.astype(np.uint8))
+        np.save(path.with_suffix(".npy"), skeleton.astype(np.uint8, copy=False))
     if png:
         if skeleton.ndim != 2:
             print(
@@ -82,7 +82,7 @@ def save_skeleton(
 
 
 def save_radius(path: Path, radius_matrix: np.ndarray) -> None:
-    np.save(path.with_suffix(".npy"), radius_matrix.astype(np.float64))
+    np.save(path.with_suffix(".npy"), radius_matrix.astype(np.float64, copy=False))
 
 
 def save_analysis_outputs(

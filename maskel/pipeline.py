@@ -224,11 +224,12 @@ def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
     """True when no two foreground pixels in *skeleton* are adjacent (full
     connectivity), i.e. every "branch" is an isolated single pixel.
 
-    ``skan.Skeleton`` (via ``build_vessel_graph``) requires at least one
-    graph edge to build its sparse path matrix and raises a low-level
-    ``ValueError`` from inside scipy.sparse otherwise - this is checked
-    for up front so a degenerate but perfectly valid input (e.g. a
-    single-pixel object, or a mask whose thinned skeleton happens to
+    ``skan.Skeleton`` (via ``build_vessel_graph``, and via
+    ``collapse_triangle_junctions``'s own call during junction cleanup)
+    requires at least one graph edge to build its sparse path matrix and
+    raises a low-level ``ValueError`` from inside scipy.sparse otherwise -
+    this is checked for up front so a degenerate but perfectly valid input
+    (e.g. a single-pixel object, or a mask whose thinned skeleton happens to
     leave only isolated points) degrades to the same empty-result path as
     an all-background skeleton, rather than crashing.
     """
@@ -355,30 +356,20 @@ def _analyze_single_object(
             preprocessed_binary=preprocessed_binary,
         )
 
-    # skan's Skeleton() (used by both collapse_triangle_junctions below and
-    # build_vessel_graph further down) requires at least one edge - it
-    # crashes if every connected component of the skeleton is a single
-    # isolated pixel (no two foreground pixels adjacent anywhere). Lee94
-    # thinning legitimately produces isolated points (protected as
-    # endpoints), e.g. for a tiny/noisy object, so this isn't an error
-    # condition - just one with no graph to build. Detected cheaply by
-    # comparing the connected-component count against the foreground pixel
-    # count: they're equal exactly when every component has size 1.
-    full_connectivity = ndi.generate_binary_structure(skeleton.ndim, skeleton.ndim)
-    _, num_components = ndi.label(skeleton, structure=full_connectivity)
-    if num_components == np.count_nonzero(skeleton):
-        return _ObjectResult(
-            skeleton=skeleton,
-            summary_features={},
-            branch_records=[],
-            node_records=[],
-            preprocessed_binary=preprocessed_binary,
-        )
+    # -- pre-compute EDT once for reuse, if anything below needs it ------
+    # `binary` doesn't change from here on (only `skeleton`/`graph` do), so
+    # the same distance transform serves both junction cleanup's temporary
+    # radius matrix and the final mask_radius output below rather than
+    # being recomputed - the EDT is often the most expensive step here,
+    # especially in 3D.
+    edt = None
+    if config.extraction.junction_cleanup or config.extraction.mask_radius:
+        edt = ndi.distance_transform_edt(binary, sampling=spacing)
 
     # -- optional: collapse triangle junction artifacts -----------------
     # (requires EDT; done on the original skeleton before graph building)
     if config.extraction.junction_cleanup:
-        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing)
+        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing, edt=edt)
         skeleton = collapse_triangle_junctions(
             skeleton,
             radius_matrix=rm_temp,
@@ -428,7 +419,9 @@ def _analyze_single_object(
     radius_matrix = None
     radius_stats = None
     if config.extraction.mask_radius:
-        radius_matrix, radius_stats = compute_radii(binary, skeleton, spacing=spacing)
+        radius_matrix, radius_stats = compute_radii(
+            binary, skeleton, spacing=spacing, edt=edt
+        )
 
     branch_data = summarize(graph, separator="-")
 
