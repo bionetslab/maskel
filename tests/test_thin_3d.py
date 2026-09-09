@@ -152,3 +152,77 @@ class TestRemovedEpochTagWrap:
 
         assert np.array_equal(result.astype(bool), skeletonize(vol))
         assert result.any(), "the rod must survive as skeleton"
+
+
+def _isolated_voxel_3d() -> np.ndarray:
+    vol = np.zeros((3, 3, 3), dtype=np.uint8)
+    vol[1, 1, 1] = 1
+    return vol
+
+
+def _axis_line_3d() -> np.ndarray:
+    vol = np.zeros((3, 3, 5), dtype=np.uint8)
+    vol[1, 1, :] = 1
+    return vol
+
+
+def _space_diagonal_line_3d() -> np.ndarray:
+    """The 3D analogue of test_thin_2d's diagonal_line: a line along the
+    space diagonal, exercising the 26-vs-6 connectivity conventions rather
+    than a face-aligned run."""
+    vol = np.zeros((5, 5, 5), dtype=np.uint8)
+    for i in range(5):
+        vol[i, i, i] = 1
+    return vol
+
+
+def _plus_junction_3d() -> np.ndarray:
+    """A degree-6 branch point: one line along each axis, all crossing at
+    the centre voxel."""
+    vol = np.zeros((5, 5, 5), dtype=np.uint8)
+    vol[2, 2, :] = 1
+    vol[2, :, 2] = 1
+    vol[:, 2, 2] = 1
+    return vol
+
+
+def _hollow_shell_3d() -> np.ndarray:
+    """A hollow cube: one real cavity to preserve, the 3D analogue of
+    test_thin_2d's ring_one_hole."""
+    vol = np.ones((5, 5, 5), dtype=np.uint8)
+    vol[1:4, 1:4, 1:4] = 0
+    return vol
+
+
+class TestSyntheticPatternEquivalence:
+    """Small, hand-constructed patterns compared against scikit-image's Lee
+    thinning - the synthetic complement to TestForegroundSizedBuffers' and
+    TestRemovedEpochTagWrap's real-shaped volumes. Each one targets a
+    specific edge case from the Euler-invariant-redundancy appendix rather
+    than relying on whatever topology happens to occur in a real scan.
+
+    Deliberately excluded: a volume exactly 1 voxel thick along one axis.
+    scikit-image's shared 3D routine special-cases that shape (dropping to
+    4 border directions, treating it as an embedded 2D image), which
+    thin_3d does not - it always sweeps all 6 directions, since real 3D
+    data is never expected to be flat across its entire extent. The two
+    implementations legitimately disagree on that shape; it isn't one
+    thin_3d was designed to match.
+    """
+
+    @pytest.mark.parametrize(
+        "vol",
+        [
+            pytest.param(_isolated_voxel_3d(), id="isolated_voxel"),
+            pytest.param(_axis_line_3d(), id="axis_line"),
+            pytest.param(_space_diagonal_line_3d(), id="space_diagonal_line"),
+            pytest.param(_plus_junction_3d(), id="plus_junction"),
+            pytest.param(_hollow_shell_3d(), id="hollow_shell_one_cavity"),
+        ],
+    )
+    def test_maskel_vs_scikit_skeletonize_lee(self, vol):
+        maskel_skel = thin_3d(vol)
+        scikit_skel = skeletonize(vol).astype(np.uint8)
+        assert np.array_equal(maskel_skel, scikit_skel), (
+            "skeleton mismatch: algorithms produce different results"
+        )
