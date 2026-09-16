@@ -1,6 +1,6 @@
 <img src="docs/assets/favicon.png" alt="maskel" width="250">
 
-##### Simon Wittmann, Dominik Pysch, Anna Möller
+##### Simon Wittmann, Dominik Pysch, Stefan Uderhardt, David B. Blumenthal, Anna Möller
 
 [![PyPI version](https://img.shields.io/pypi/v/maskel.svg)](https://pypi.org/project/maskel/)
 [![Python version](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/)
