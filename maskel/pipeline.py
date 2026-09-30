@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,24 @@ from maskel.thin import lee94_thin
 if TYPE_CHECKING:
     from pandas import DataFrame
     from skan import Skeleton
+
+# A dedicated logger (rather than bare print statements) so that progress
+# messages ("processing image of shape ...", object counts, timing) are
+# visible on stdout by default - without requiring the CLI or napari-maskel
+# to configure anything - while staying easy for either of them, or an
+# embedding application, to reconfigure or silence later (e.g. by adding a
+# root handler and calling logging.getLogger("maskel").propagate = True, or
+# just raising this logger's level). Guarded against adding a second handler
+# if this module is ever re-imported (e.g. importlib.reload in a notebook).
+# Left propagating (the logging default) rather than isolated, so pytest's
+# caplog - which attaches its capturing handler at the root logger - can see
+# these records in tests without extra setup.
+logger = logging.getLogger("maskel")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 # Printed at most once per process: box-counting fractal dimension is
 # invalid for anisotropic voxels, so it's forced to 0.0 whenever spacing is
@@ -73,6 +93,11 @@ class AnalysisResult:
     ``preprocessed_binary`` are stitched back to the full input shape, since
     (unlike per-object lists) that stitching is real work only worth doing
     once, centrally, regardless of how many consumers want a full-image view.
+    Despite its name, ``preprocessed_binary`` is only binary (0/1) for a
+    plain binary mask input - for a multi-object instance segmentation map
+    it carries each object's own id (not just presence/absence), so a
+    "show preprocessed" layer keeps the original per-object labels instead
+    of collapsing every object into one undifferentiated blob.
     """
 
     skeleton: np.ndarray
@@ -411,13 +436,7 @@ def analyze_segmentation_mask(
     config : PipelineConfig
         Full pipeline configuration.
     """
-    object_crops = _iter_object_crops(mask)
-
-    if not object_crops:
-        return AnalysisResult(
-            skeleton=np.zeros(mask.shape, dtype=np.uint8),
-            objects=[],
-        )
+    t0 = time.perf_counter()
 
     spacing = config.extraction.spacing
     if spacing is not None and len(spacing) != mask.ndim:
@@ -429,6 +448,20 @@ def analyze_segmentation_mask(
         )
         spacing = None
 
+    logger.info("Processing image of shape %s with spacing %s", mask.shape, spacing)
+
+    object_crops = _iter_object_crops(mask)
+    logger.info("Processing %d object(s)", len(object_crops))
+
+    if not object_crops:
+        logger.info(
+            "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
+        )
+        return AnalysisResult(
+            skeleton=np.zeros(mask.shape, dtype=np.uint8),
+            objects=[],
+        )
+
     want_radius = config.extraction.mask_radius
     want_preprocessed = (
         config.extraction.closing_iterations > 0 or config.extraction.fill_holes
@@ -436,8 +469,18 @@ def analyze_segmentation_mask(
 
     full_skeleton = np.zeros(mask.shape, dtype=np.uint8)
     full_radius = np.zeros(mask.shape, dtype=np.float64) if want_radius else None
+    # Each object's own preprocessing output is a plain 0/1 binary crop (see
+    # _analyze_single_object), so it carries no id of its own - stitching
+    # with each object's real object_id (rather than a flat np.maximum of
+    # 1s) is what lets a multi-object preprocessed mask keep its original
+    # per-object labels instead of collapsing to a binary blob. Matches
+    # _iter_object_crops' own dtype choice (the input mask's own integer
+    # dtype where possible, so ids round-trip exactly).
+    preprocessed_dtype = (
+        mask.dtype if np.issubdtype(mask.dtype, np.integer) else np.int64
+    )
     full_preprocessed = (
-        np.zeros(mask.shape, dtype=np.uint8) if want_preprocessed else None
+        np.zeros(mask.shape, dtype=preprocessed_dtype) if want_preprocessed else None
     )
 
     ndim = mask.ndim
@@ -451,9 +494,7 @@ def analyze_segmentation_mask(
         if full_radius is not None and obj.radius_matrix is not None:
             full_radius[bbox] = np.maximum(full_radius[bbox], obj.radius_matrix)
         if full_preprocessed is not None and obj.preprocessed_binary is not None:
-            full_preprocessed[bbox] = np.maximum(
-                full_preprocessed[bbox], obj.preprocessed_binary
-            )
+            full_preprocessed[bbox][obj.preprocessed_binary > 0] = object_id
 
         summary_features = (
             {**obj.summary_features, "object_id": object_id}
@@ -485,6 +526,10 @@ def analyze_segmentation_mask(
                 radius_matrix=obj.radius_matrix,
             )
         )
+
+    logger.info(
+        "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
+    )
 
     return AnalysisResult(
         skeleton=full_skeleton,

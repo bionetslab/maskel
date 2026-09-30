@@ -29,7 +29,11 @@ class TestExtentGuard:
     def test_rejects_axis_longer_than_uint16(self):
         # Coordinates are stored as uint16, so a longer axis would silently
         # wrap inside the numba kernels - it has to be refused up front.
+        # The lone foreground voxel is what lets the volume clear the binary
+        # check, which runs first - an all-zero volume would be refused as
+        # non-binary before the extent guard is ever reached.
         oversized = np.zeros((1, 1, _MAX_DIM + 1), dtype=np.uint8)
+        oversized[0, 0, 0] = 1
 
         with pytest.raises(ValueError, match="Volume too large"):
             thin_3d(oversized)
@@ -47,26 +51,49 @@ class TestExtentGuard:
 
     def test_dimension_error_mentions_the_shape(self):
         oversized = np.zeros((1, _MAX_DIM + 1, 1), dtype=np.uint8)
+        oversized[0, 0, 0] = 1
 
         with pytest.raises(ValueError, match=str(_MAX_DIM)):
             thin_3d(oversized)
 
 
+class TestBinaryGuard:
+    """thin_3d's kernels test foreground with ``== 1``, so non-binary input has
+    to be refused rather than silently surviving the peeling passes."""
+
+    @pytest.mark.parametrize(
+        "vol",
+        [
+            pytest.param(np.array([[[0, 7, 300]]], dtype=np.uint16), id="grayscale"),
+            pytest.param(np.array([[[0, 255]]], dtype=np.uint8), id="0-255-mask"),
+            pytest.param(np.array([[[0, 2]]], dtype=np.uint8), id="label-map"),
+            pytest.param(np.array([[[-1, 1]]], dtype=np.int8), id="negative"),
+        ],
+    )
+    def test_rejects_values_outside_zero_and_one(self, vol):
+        with pytest.raises(ValueError, match="must be binary"):
+            thin_3d(vol)
+
+
 class TestForegroundSizedBuffers:
-    def test_empty_volume_needs_no_candidate_slots(self):
-        # Foreground count 0 -> zero-length scratch buffers; the sweep loop
-        # must find no candidates rather than index into them.
+    def test_single_voxel_needs_one_candidate_slot(self):
+        # Foreground count 1 is the smallest a valid volume can have, since a
+        # binary volume has to contain a 1 - so this is the lower bound for the
+        # scratch buffers.  The voxel is isolated, hence nothing to peel.
         vol = np.zeros((8, 8, 8), dtype=np.uint8)
+        vol[4, 4, 4] = 1
 
         result = thin_3d(vol)
 
-        assert not result.any()
         assert result.shape == vol.shape
+        assert np.array_equal(result.astype(bool), skeletonize(vol))
 
-    def test_fully_solid_volume(self):
-        # Every voxel is foreground, so the buffers are sized to the whole
-        # volume - the upper-bound case for the foreground-count sizing.
+    def test_almost_fully_solid_volume(self):
+        # All but one voxel is foreground, so the buffers are sized to very
+        # nearly the whole volume - the upper bound for the foreground-count
+        # sizing, given that a valid volume has to contain at least one 0.
         vol = np.ones((12, 12, 12), dtype=np.uint8)
+        vol[0, 0, 0] = 0
 
         result = thin_3d(vol)
 

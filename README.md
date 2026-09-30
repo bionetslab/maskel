@@ -23,7 +23,7 @@ maskel validate config.json
 maskel run --input /path/to/images --config config.json --out outputs
 ```
 
-A config JSON can also be exported from the [napari-maskel](https://github.com/bionetslab/napari-maskel) plugin's **Save Config** button and used here directly — both consume the same schema (see below).
+A config JSON can also be exported from the [napari-maskel](https://github.com/bionetslab/napari-maskel) plugin's **Save recipe** button and used here directly — both consume the same schema (see below).
 
 Input images can be either a plain binary segmentation mask, or a multi-object instance segmentation map (more than one distinct nonzero value). In the latter case, every object is skeletonized independently — touching-but-distinct objects are correctly kept separate rather than merged into one skeleton — and every output row is tagged with the `object_id` it came from (the mask's own label value; `1` for a plain binary mask).
 
@@ -34,6 +34,7 @@ CLI outputs:
 - Optional per-image branch tables when `output.write_branch_csv=true` (includes an `object_id` column)
 - Optional per-image node tables when `output.write_node_csv=true` (includes an `object_id` column)
 - Optional per-object skeleton graphs when `output.write_graphml=true` (one `_<object_id>_graph.graphml` file per object)
+- Optional per-object pickled networkx graphs when `output.write_networkx_graph=true` (one `_<object_id>_graph.pkl` file per object; richer than GraphML - keeps NaN attributes and native Python types)
 
 ## Configuration
 
@@ -41,7 +42,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "extraction": {
     "branches": false,
     "branch_color_property": "tortuosity",
@@ -68,7 +69,8 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
     "write_branch_csv": false,
     "write_node_csv": false,
     "write_radius": false,
-    "write_graphml": false
+    "write_graphml": false,
+    "write_networkx_graph": false
   }
 }
 ```
@@ -99,6 +101,7 @@ Extraction and output settings are defined in a JSON config file (e.g. the one e
 | `output.write_node_csv` | bool | `false` | Write per-node CSV tables (requires `extraction.nodes`) |
 | `output.write_radius` | bool | `false` | Write per-pixel radius matrix as `.npy` (requires `extraction.mask_radius`) |
 | `output.write_graphml` | bool | `false` | Write skeleton graph as `.graphml` per image (nodes = graph nodes, edges = branches) |
+| `output.write_networkx_graph` | bool | `false` | Write skeleton graph as a pickled `networkx.MultiGraph` per image - same node/edge/graph attributes as `write_graphml`, but keeps NaN values and native Python types rather than GraphML/yEd-safe ones |
 
 ### Shell completions
 
@@ -119,13 +122,10 @@ Add the appropriate line to your shell rc for persistent tab-completion.
 
 ```sh
 uv sync --extra dev && pytest                     # all tests
-uv sync --extra dev && pytest -m "not slow"       # skip regression tests
+uv sync --extra dev && pytest -m "not slow"       # skip the slow 3D comparison test
 ```
 
-- **3D regression** - thinning + features on a brain volume (from scikit-image), compared against saved baselines
-- **3D comparison** - maskel `lee94_thin` vs `skimage.morphology.skeletonize` on the brain volume, asserting identical output
-
-First run (or `--update-baseline`) generates baselines in `tests/skeletons/` and `tests/features/`.
+- **3D comparison** - maskel `lee94_thin` vs `skimage.morphology.skeletonize` on a brain volume (from scikit-image), asserting identical output
 
 Real-data regression tests against the HRF dataset (2D thinning + feature extraction on all 45 samples) live in [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations), since they depend on that external dataset.
 

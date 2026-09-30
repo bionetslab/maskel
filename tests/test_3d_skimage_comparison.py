@@ -14,7 +14,9 @@ class TestSkeletonizeComparison:
 
     @pytest.fixture(scope="class")
     def image(self):
-        return data.brain()
+        # thin_3d requires binary input; skimage's skeletonize binarizes
+        # internally, so thresholding here keeps both sides equivalent.
+        return (data.brain() > 0).astype(np.uint8)
 
     def test_maskel_vs_scikit_skeletonize(self, image):
         maskel_skel = lee94_thin(image)

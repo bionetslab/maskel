@@ -8,7 +8,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 5
+CONFIG_SCHEMA_VERSION = 6
 
 COLORABLE_BRANCH_PROPERTIES = [
     "object_id",
@@ -103,6 +103,7 @@ class OutputConfig:
     write_node_csv: bool = False
     write_radius: bool = False
     write_graphml: bool = False
+    write_networkx_graph: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +114,7 @@ class OutputConfig:
             "write_node_csv": self.write_node_csv,
             "write_radius": self.write_radius,
             "write_graphml": self.write_graphml,
+            "write_networkx_graph": self.write_networkx_graph,
         }
 
     @classmethod

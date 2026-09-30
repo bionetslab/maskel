@@ -47,7 +47,10 @@ class TestClosing:
 
 class TestFillHoles:
     def test_fill_holes_fills_enclosed_void(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # The 1px background border is what keeps a 0 in the mask once the hole
+        # is filled - an all-foreground object is not valid thinning input.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[6:10, 6:10] = 0
         ring[6:10, 6] = 1
         ring[6:10, 9] = 1
@@ -83,7 +86,9 @@ class TestMaxHoleSize:
         assert not result.preprocessed_binary[9:23, 9:23].any()
 
     def test_max_hole_size_fills_small_holes(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see test_fill_holes_fills_enclosed_void.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:9, 7:9] = 0
         ring[7:9, 7] = 1
         ring[7:9, 8] = 1
@@ -100,7 +105,9 @@ class TestMaxHoleSize:
         assert result.preprocessed_binary[7:9, 7:9].all()
 
     def test_max_hole_size_zero_fills_all(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see test_fill_holes_fills_enclosed_void.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:11, 7:11] = 0
         ring[7:11, 7] = 1
         ring[7:11, 10] = 1
@@ -130,7 +137,9 @@ class TestPreprocessedBinary:
         assert result.preprocessed_binary.shape == img.shape
 
     def test_set_when_fill_holes_active(self):
-        ring = np.ones((16, 16), dtype=np.uint8)
+        # Background border: see TestFillHoles.
+        ring = np.zeros((16, 16), dtype=np.uint8)
+        ring[1:15, 1:15] = 1
         ring[7:9, 7:9] = 0
         ring[7:9, 7] = 1
         ring[7:9, 8] = 1
@@ -162,3 +171,63 @@ class TestPreprocessedBinary:
         )
         result = analyze_segmentation_mask(img, config)
         assert result.preprocessed_binary is None
+
+
+class TestPreprocessedBinaryMultiObject:
+    """Despite its name, preprocessed_binary carries real object ids for a
+    multi-object instance segmentation map, not just 0/1 - see
+    analyze_segmentation_mask's stitching of full_preprocessed."""
+
+    def test_preserves_object_ids(self):
+        mask = np.zeros((16, 32), dtype=np.uint8)
+        mask[4:8, 4:8] = 5
+        mask[4:8, 20:24] = 9
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.preprocessed_binary is not None
+        assert (result.preprocessed_binary[4:8, 4:8] == 5).all()
+        assert (result.preprocessed_binary[4:8, 20:24] == 9).all()
+        assert (result.preprocessed_binary[0:4, 0:16] == 0).all()
+
+    def test_plain_binary_mask_still_reports_id_one(self):
+        img = np.zeros((16, 16), dtype=np.uint8)
+        img[8, 4:12] = 1
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(img, config)
+
+        assert result.preprocessed_binary is not None
+        foreground = result.preprocessed_binary[result.preprocessed_binary != 0]
+        assert (foreground == 1).all()
+
+    def test_dtype_matches_integer_input_mask(self):
+        mask = np.zeros((16, 16), dtype=np.int32)
+        mask[4:8, 4:8] = 5
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert result.preprocessed_binary.dtype == mask.dtype
+
+    def test_dtype_is_integer_for_non_integer_input_mask(self):
+        mask = np.zeros((16, 16), dtype=np.float64)
+        mask[4:8, 4:8] = 1.0
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(closing_iterations=1),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        assert np.issubdtype(result.preprocessed_binary.dtype, np.integer)
