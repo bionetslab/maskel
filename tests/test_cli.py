@@ -612,7 +612,7 @@ def _write_cross_npy(path, size=48):
 
 
 class TestSkeletonizeTiledCommand:
-    """`vesskel skeletonize_tiled` - single image, tiled, skeleton only."""
+    """`maskel skeletonize_tiled` - single image, tiled, skeleton only."""
 
     def _args(self, tmp_path, **overrides):
         args = {
@@ -621,15 +621,14 @@ class TestSkeletonizeTiledCommand:
             "tile_shape": [16],
             "halo": 4,
             "config": None,
-            "jobs": 1,
             "progress": "off",
         }
         args.update(overrides)
         return _make_args(**args)
 
     def test_writes_skeleton_manifest_and_done_log(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
-        from vesskel.tiling import DONE_LOG_NAME
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.tiling import DONE_LOG_NAME
 
         image = _write_cross_npy(tmp_path / "vessels.npy")
 
@@ -647,8 +646,8 @@ class TestSkeletonizeTiledCommand:
         assert not (work / "skeletons").exists()
 
     def test_matches_untiled_thinning(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
-        from vesskel.thin import lee94_thin
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.thin import lee94_thin
 
         image = _write_cross_npy(tmp_path / "vessels.npy")
         _run_skeletonize_tiled(self._args(tmp_path))
@@ -658,7 +657,7 @@ class TestSkeletonizeTiledCommand:
 
     def test_read_only_input_from_an_image_reader(self, tmp_path):
         """PIL/tifffile can hand back read-only arrays; in-place must yield."""
-        from vesskel.cli import _run_skeletonize_tiled
+        from maskel.cli import _run_skeletonize_tiled
 
         image = np.zeros((48, 48), dtype=np.uint8)
         image[22:26, :] = 255
@@ -670,8 +669,8 @@ class TestSkeletonizeTiledCommand:
         assert np.count_nonzero(np.load(tmp_path / "work" / "vessels_skeleton.npy")) > 0
 
     def test_per_axis_tile_shape(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
-        from vesskel.tiling import read_manifest
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.tiling import read_manifest
 
         _write_cross_npy(tmp_path / "vessels.npy")
         _run_skeletonize_tiled(self._args(tmp_path, tile_shape=[16, 24]))
@@ -679,8 +678,8 @@ class TestSkeletonizeTiledCommand:
         assert read_manifest(tmp_path / "work").tile_shape == (16, 24)
 
     def test_halo_defaults_when_omitted(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
-        from vesskel.tiling import DEFAULT_HALO, read_manifest
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.tiling import DEFAULT_HALO, read_manifest
 
         _write_cross_npy(tmp_path / "vessels.npy")
         _run_skeletonize_tiled(self._args(tmp_path, halo=None))
@@ -698,7 +697,7 @@ class TestSkeletonizeTiledCommand:
     )
     def test_processing_config_is_rejected(self, tmp_path, extraction):
         """The command only thins; anything else must fail loudly, not silently."""
-        from vesskel.cli import _run_skeletonize_tiled
+        from maskel.cli import _run_skeletonize_tiled
 
         _write_cross_npy(tmp_path / "vessels.npy")
         config_path = tmp_path / "cfg.json"
@@ -718,7 +717,7 @@ class TestSkeletonizeTiledCommand:
 
     def test_feature_config_is_accepted_and_ignored(self, tmp_path):
         """Only the skeleton is produced, so extraction flags are not errors."""
-        from vesskel.cli import _run_skeletonize_tiled
+        from maskel.cli import _run_skeletonize_tiled
 
         _write_cross_npy(tmp_path / "vessels.npy")
         config_path = tmp_path / "cfg.json"
@@ -732,17 +731,19 @@ class TestSkeletonizeTiledCommand:
             )
         )
 
-        assert _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
+        assert (
+            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
+        )
         assert not list((tmp_path / "work").glob("*.csv"))
 
     def test_missing_input_raises(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
+        from maskel.cli import _run_skeletonize_tiled
 
         with pytest.raises(ValueError, match="not an existing file"):
             _run_skeletonize_tiled(self._args(tmp_path))
 
     def test_unsupported_extension_raises(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
+        from maskel.cli import _run_skeletonize_tiled
 
         bad = tmp_path / "vessels.txt"
         bad.write_text("not an image")
@@ -750,15 +751,8 @@ class TestSkeletonizeTiledCommand:
         with pytest.raises(ValueError, match="Unsupported input"):
             _run_skeletonize_tiled(self._args(tmp_path, input=str(bad)))
 
-    def test_negative_jobs_raises(self, tmp_path):
-        from vesskel.cli import _run_skeletonize_tiled
-
-        _write_cross_npy(tmp_path / "vessels.npy")
-        with pytest.raises(ValueError, match="--jobs"):
-            _run_skeletonize_tiled(self._args(tmp_path, jobs=-1))
-
     def test_parser_accepts_the_subcommand(self):
-        from vesskel.cli import _make_parser
+        from maskel.cli import _make_parser
 
         args = _make_parser().parse_args(
             [
@@ -773,27 +767,24 @@ class TestSkeletonizeTiledCommand:
                 "256",
                 "--halo",
                 "64",
-                "-j",
-                "4",
             ]
         )
         assert args.command == "skeletonize_tiled"
         assert args.tile_shape == [512, 512, 256]
         assert args.halo == 64
-        assert args.jobs == 4
         assert args.config is None
 
     def test_main_dispatches_skeletonize_tiled(self, tmp_path, monkeypatch):
         import sys
 
-        from vesskel.cli import main
+        from maskel.cli import main
 
         _write_cross_npy(tmp_path / "vessels.npy")
         monkeypatch.setattr(
             sys,
             "argv",
             [
-                "vesskel",
+                "maskel",
                 "skeletonize_tiled",
                 "--input",
                 str(tmp_path / "vessels.npy"),

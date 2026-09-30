@@ -1,0 +1,48 @@
+"""Tiled (out-of-core) skeletonization.
+
+Thinning is a local operation, so a tile can be thinned on its own as long as
+it is read with a halo wider than the algorithm's reach. Only the halo-free
+core of each thinned tile is kept, and the cores tile the volume exactly.
+
+Halo: roughly 8x the largest vessel radius in 3D. Too small fails silently,
+as small differences near tile seams.
+
+Memory: one tile at a time, about 5 bytes per voxel of the read extent
+(``tile + 2 * halo`` per axis) plus 7 bytes per foreground voxel.
+
+`TileGrid.read_overhead` gives the redundant-work multiplier - the halo is
+thinned too, then discarded.
+
+Thinning is all this does; `analyze_tiled` rejects any other configured step.
+"""
+
+from maskel.tiling.analyze import analyze_tiled
+from maskel.tiling.grid import DEFAULT_HALO, TileGrid, TileSpec
+from maskel.tiling.manifest import (
+    DONE_LOG_NAME,
+    MANIFEST_NAME,
+    SKELETON_NAME,
+    DoneLog,
+    read_manifest,
+    write_manifest,
+)
+from maskel.tiling.progress import PROGRESS_ENV_VAR, PROGRESS_STYLES
+from maskel.tiling.reader import BlockReader
+from maskel.tiling.stream import skeletonize_streaming
+
+__all__ = [
+    "DEFAULT_HALO",
+    "DONE_LOG_NAME",
+    "MANIFEST_NAME",
+    "PROGRESS_ENV_VAR",
+    "PROGRESS_STYLES",
+    "SKELETON_NAME",
+    "BlockReader",
+    "DoneLog",
+    "TileGrid",
+    "TileSpec",
+    "analyze_tiled",
+    "read_manifest",
+    "skeletonize_streaming",
+    "write_manifest",
+]

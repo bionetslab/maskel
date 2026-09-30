@@ -1,4 +1,4 @@
-"""Tile geometry: how a volume is partitioned and how much each tile reads."""
+"""Tile geometry: how the volume is split and how much each tile reads."""
 
 from __future__ import annotations
 
@@ -10,28 +10,15 @@ from math import prod
 
 import numpy as np
 
-# Deliberately generous default: safe for vessel-like structures without
-# needing to know the largest radius in the volume up front.
 DEFAULT_HALO = 100
 
 
 @dataclass(frozen=True)
 class TileSpec:
-    """Geometry of a single tile.
+    """One tile: where its core is, what to read for it, and where the core
+    sits inside that read block.
 
-    Attributes
-    ----------
-    index : tuple[int, ...]
-        Position of the tile in the grid.
-    core : tuple[slice, ...]
-        Global slice of the halo-free region this tile is responsible for.
-        Cores of all tiles partition the volume exactly.
-    read : tuple[slice, ...]
-        Global slice actually loaded for thinning: *core* grown by the halo
-        and clipped to the volume bounds.
-    core_in_read : tuple[slice, ...]
-        Where *core* sits inside a block of shape ``read``. Used to crop the
-        thinned block before it is written out.
+    All three are tuples of slices, one per axis.
     """
 
     index: tuple[int, ...]
@@ -53,12 +40,7 @@ class TileSpec:
         return tuple(s.stop - s.start for s in self.read)
 
     def to_dict(self) -> dict[str, object]:
-        """Explicit coordinates for the manifest.
-
-        Start/stop pairs are half-open (``stop`` is exclusive, as in numpy
-        slicing) and listed in array-axis order - so for a ZYX volume,
-        entry 0 is Z.
-        """
+        """Manifest record. Bounds are half-open, in array-axis order."""
         return {
             "index": list(self.index),
             "core": _bounds(self.core),
@@ -70,28 +52,16 @@ class TileSpec:
 
 
 def _bounds(slices: tuple[slice, ...]) -> dict[str, list[int]]:
-    return {
-        "start": [s.start for s in slices],
-        "stop": [s.stop for s in slices],
-    }
+    return {"start": [s.start for s in slices], "stop": [s.stop for s in slices]}
 
 
 @dataclass(frozen=True)
 class TileGrid:
-    """A partition of *shape* into cores of *tile_shape*, each read with *halo*.
+    """Splits *shape* into cores of *tile_shape*, each read with *halo* extra
+    voxels on every side.
 
-    Parameters
-    ----------
-    shape : tuple[int, ...]
-        Shape of the full volume.
-    tile_shape : int | tuple[int, ...]
-        Core edge length(s). A scalar is broadcast over all axes. The last
-        tile along an axis is short when the shape is not an exact multiple.
-    halo : int
-        Number of voxels read beyond the core on every side, clipped at the
-        volume boundary. Clipping is correct rather than a special case: the
-        true volume border is genuinely zero-padded, which is exactly what
-        monolithic thinning sees. See `vesskel.tiling` for sizing.
+    A scalar *tile_shape* applies to all axes. Edge tiles are short, and the
+    halo is clipped at the volume bounds.
     """
 
     shape: tuple[int, ...]
@@ -138,11 +108,7 @@ class TileGrid:
         return tuple(-(-s // t) for s, t in zip(self.shape, self.tile_shape))
 
     def _axis_spans(self, axis: int) -> list[tuple[int, int, int, int]]:
-        """``(core_start, core_stop, read_start, read_stop)`` per tile on *axis*.
-
-        Cores and reads are separable across axes, which keeps both tile
-        iteration and `read_overhead` driven by one definition.
-        """
+        """``(core_start, core_stop, read_start, read_stop)`` per tile on *axis*."""
         tile = self.tile_shape[axis]
         extent = self.shape[axis]
         spans = []
@@ -154,13 +120,8 @@ class TileGrid:
 
     @property
     def read_total(self) -> int:
-        """Voxels read across the whole grid, summed over every tile.
-
-        Because the grid is a product of per-axis partitions, the total
-        factorises, so this is exact (short edge tiles and halos clipped at
-        the boundary included) without visiting every tile - which matters
-        when a volume has millions of them.
-        """
+        """Voxels read over the whole grid. Separable per axis, so no need to
+        walk every tile."""
         return prod(
             sum(r1 - r0 for _, _, r0, r1 in self._axis_spans(axis))
             for axis in range(len(self.shape))
@@ -168,12 +129,7 @@ class TileGrid:
 
     @property
     def read_overhead(self) -> float:
-        """`read_total` per voxel of volume.
-
-        Always >= 1.0: the cores alone cover the volume once, and the halo
-        adds re-reads on top. This is a multiplier on the *thinning work*,
-        not just on the bytes read - the halo is thinned too, then discarded.
-        """
+        """`read_total` per voxel of volume. Always >= 1."""
         return self.read_total / prod(self.shape)
 
     def __len__(self) -> int:
@@ -182,9 +138,7 @@ class TileGrid:
     def __iter__(self) -> Iterator[TileSpec]:
         axis_spans = [self._axis_spans(axis) for axis in range(len(self.shape))]
         for index in product(*(range(n) for n in self.counts)):
-            core: list[slice] = []
-            read: list[slice] = []
-            core_in_read: list[slice] = []
+            core, read, core_in_read = [], [], []
             for axis, i in enumerate(index):
                 c0, c1, r0, r1 = axis_spans[axis][i]
                 core.append(slice(c0, c1))
@@ -193,14 +147,8 @@ class TileGrid:
             yield TileSpec(index, tuple(core), tuple(read), tuple(core_in_read))
 
     def to_dict(self) -> dict[str, object]:
-        """Grid parameters plus the explicit coordinates of every tile.
-
-        The four scalar fields are the source of truth - `from_dict` rebuilds
-        the grid from those alone, so the ``tiles`` list can never disagree
-        with what the code does. It is written for reading and for external
-        tools that need to place a tile back in the volume without
-        reimplementing the geometry.
-        """
+        """Grid parameters plus every tile's coordinates. The scalars are the
+        source of truth; the tile list is for reading and external tools."""
         return {
             "shape": list(self.shape),
             "tile_shape": list(self.tile_shape),
@@ -217,9 +165,7 @@ class TileGrid:
             tile_shape=tuple(data["tile_shape"]),  # type: ignore[arg-type]
             halo=int(data["halo"]),  # type: ignore[arg-type]
         )
-        # Cheap guard against a hand-edited or truncated manifest: the tile
-        # list is derived data, so a mismatch means it no longer describes
-        # the run it claims to.
+        # Catches a hand-edited or truncated manifest.
         tiles = data.get("tiles")
         if tiles is not None and len(tiles) != len(grid):  # type: ignore[arg-type]
             raise ValueError(

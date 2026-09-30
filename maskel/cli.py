@@ -104,7 +104,7 @@ def _make_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Core tile edge length: one value for all axes, or one per axis. "
         "This sets peak memory: budget ~5 bytes per voxel of (N + 2*halo) per "
-        "axis, times --jobs. Keep it well above --halo.",
+        "axis. Keep it well above --halo.",
     )
     skel_parser.add_argument(
         "--halo",
@@ -118,13 +118,6 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Optional config JSON. This command only thins, so a config "
         "requesting preprocessing or junction cleanup is rejected rather "
         "than ignored.",
-    )
-    skel_parser.add_argument(
-        "--jobs",
-        "-j",
-        type=int,
-        default=1,
-        help="Number of parallel workers (0 = all CPU cores).",
     )
     skel_parser.add_argument(
         "--progress",
@@ -340,7 +333,7 @@ def _run_parallel(
 def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
     import warnings
 
-    from vesskel.tiling import DEFAULT_HALO, BlockReader, TileGrid, analyze_tiled
+    from maskel.tiling import DEFAULT_HALO, BlockReader, TileGrid, analyze_tiled
 
     in_path = Path(args.input)
     if not in_path.is_file():
@@ -350,9 +343,6 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
             f"Unsupported input '{in_path.name}'. Expected one of: "
             f"{', '.join(sorted(_SUPPORTED_EXTENSIONS))}."
         )
-    if args.jobs < 0:
-        raise ValueError("--jobs must be 0 (auto) or a positive integer")
-
     config = (
         load_pipeline_config(Path(args.config))
         if args.config
@@ -391,7 +381,6 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
         work_dir=out_dir,
         tile_shape=tile_shape,
         halo=halo,
-        jobs=args.jobs,
         progress=args.progress,
     )
 
