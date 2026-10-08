@@ -231,10 +231,10 @@ class TestLoadImage:
             load_image(path)
 
     def test_load_compressed_tiff_stack(self, tmp_path):
-        """A codec Pillow cannot decode, so this only passes via tifffile."""
-        path = tmp_path / "zstd_vol.tif"
+        """Compressed multi-page stack; uses a stdlib codec available on 3.13."""
+        path = tmp_path / "lzma_vol.tif"
         vol = (np.arange(3 * 4 * 5, dtype=np.uint8) % 2 * 255).reshape(3, 4, 5)
-        tifffile.imwrite(path, vol, compression="zstd", photometric="minisblack")
+        tifffile.imwrite(path, vol, compression="lzma", photometric="minisblack")
         arr = load_image(path)
         assert arr.shape == (3, 4, 5)
         assert np.array_equal(arr, vol)
