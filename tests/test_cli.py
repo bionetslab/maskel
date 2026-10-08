@@ -689,14 +689,13 @@ class TestSkeletonizeTiledCommand:
     @pytest.mark.parametrize(
         "extraction",
         [
-            {"closing_iterations": 2},
-            {"fill_holes": True},
-            {"max_hole_size": 64},
             {"junction_cleanup": True},
+            {"prune_spurs": True},
+            {"spacing": [1.0, 1.0]},
         ],
     )
     def test_processing_config_is_rejected(self, tmp_path, extraction):
-        """The command only thins; anything else must fail loudly, not silently."""
+        """Steps after the thinning must fail loudly, not silently."""
         from maskel.cli import _run_skeletonize_tiled
 
         _write_cross_npy(tmp_path / "vessels.npy")
@@ -713,6 +712,50 @@ class TestSkeletonizeTiledCommand:
 
         (name,) = extraction
         with pytest.raises(NotImplementedError, match=name):
+            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
+
+    def test_preprocessing_config_is_applied(self, tmp_path):
+        """Closing and bounded hole filling run per tile."""
+        from maskel.cli import _run_skeletonize_tiled
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        config_path = tmp_path / "cfg.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "extraction": {
+                        "closing_iterations": 1,
+                        "fill_holes": True,
+                        "max_hole_size": 8,
+                    },
+                    "output": {},
+                }
+            )
+        )
+
+        assert (
+            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
+        )
+        assert (tmp_path / "work" / "vessels_skeleton.npy").is_file()
+
+    def test_unbounded_fill_holes_is_rejected(self, tmp_path):
+        """No halo covers a hole that may span the volume."""
+        from maskel.cli import _run_skeletonize_tiled
+
+        _write_cross_npy(tmp_path / "vessels.npy")
+        config_path = tmp_path / "cfg.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "extraction": {"fill_holes": True},
+                    "output": {},
+                }
+            )
+        )
+
+        with pytest.raises(ValueError, match="max_hole_size"):
             _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
 
     def test_feature_config_is_accepted_and_ignored(self, tmp_path):

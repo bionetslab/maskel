@@ -1,6 +1,6 @@
 """What a run writes into its work directory.
 
-- ``manifest.json`` - grid parameters and per-tile coordinates
+- ``manifest.json`` - grid parameters, per-tile coordinates, preprocessing
 - ``done.jsonl`` - one line per finished tile
 - ``<base_name>_skeleton.npy`` - the result
 """
@@ -11,19 +11,24 @@ import json
 from pathlib import Path
 
 from maskel.tiling.grid import TileGrid, TileSpec
+from maskel.tiling.preprocess import BlockPreprocess
 
 MANIFEST_NAME = "manifest.json"
 DONE_LOG_NAME = "done.jsonl"
 SKELETON_NAME = "skeleton.npy"
 
 
-def write_manifest(grid: TileGrid, work_dir: Path) -> Path:
+def write_manifest(
+    grid: TileGrid, work_dir: Path, preprocess: BlockPreprocess | None = None
+) -> Path:
     """Write *grid* to ``work_dir/manifest.json``, creating the directory."""
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
+    data = grid.to_dict()
+    data["preprocess"] = preprocess.to_dict() if preprocess else None
     path = work_dir / MANIFEST_NAME
     with path.open("w") as f:
-        json.dump(grid.to_dict(), f, indent=2)
+        json.dump(data, f, indent=2)
     return path
 
 
@@ -31,6 +36,12 @@ def read_manifest(work_dir: Path) -> TileGrid:
     """Rebuild the `TileGrid` recorded in ``work_dir/manifest.json``."""
     with (Path(work_dir) / MANIFEST_NAME).open() as f:
         return TileGrid.from_dict(json.load(f))
+
+
+def read_manifest_preprocess(work_dir: Path) -> dict[str, object] | None:
+    """The preprocessing settings recorded in ``work_dir/manifest.json``."""
+    with (Path(work_dir) / MANIFEST_NAME).open() as f:
+        return json.load(f).get("preprocess")
 
 
 class DoneLog:

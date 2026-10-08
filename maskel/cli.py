@@ -110,14 +110,16 @@ def _make_parser() -> argparse.ArgumentParser:
         "--halo",
         type=int,
         default=None,
-        help="Voxels read beyond each tile core (default: 100). Must exceed "
-        "the thinning's reach, roughly 8x the largest vessel radius in 3D.",
+        help="Voxels read beyond each tile core for the thinning "
+        "(default: 100). Must exceed the thinning's reach, roughly 8x the "
+        "largest vessel radius in 3D. Closing and hole filling add their own "
+        "margin on top of this.",
     )
     skel_parser.add_argument(
         "--config",
-        help="Optional config JSON. This command only thins, so a config "
-        "requesting preprocessing or junction cleanup is rejected rather "
-        "than ignored.",
+        help="Optional config JSON. Closing and hole filling run per tile "
+        "(fill_holes needs max_hole_size); anything after the thinning, such "
+        "as junction cleanup, is rejected rather than ignored.",
     )
     skel_parser.add_argument(
         "--progress",
@@ -333,7 +335,13 @@ def _run_parallel(
 def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
     import warnings
 
-    from maskel.tiling import DEFAULT_HALO, BlockReader, TileGrid, analyze_tiled
+    from maskel.tiling import (
+        DEFAULT_HALO,
+        BlockReader,
+        TileGrid,
+        analyze_tiled,
+        preprocess_from_config,
+    )
 
     in_path = Path(args.input)
     if not in_path.is_file():
@@ -364,12 +372,17 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
     # Report the geometry up front: the redundant-work factor is the number
     # people get wrong, and a bad one costs hours on a large volume. The grid
     # is rebuilt inside analyze_tiled; silence its duplicate warning here.
+    preprocess = preprocess_from_config(config.extraction)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        grid = TileGrid(shape=shape, tile_shape=tile_shape, halo=halo)
+        grid = TileGrid(
+            shape=shape, tile_shape=tile_shape, halo=halo + preprocess.margin
+        )
+    split = f" ({halo} thinning + {preprocess.margin} preprocessing)"
     print(
         f"{in_path.name}: shape={shape}, {len(grid)} tile(s) of "
-        f"{grid.tile_shape} with halo={halo} "
+        f"{grid.tile_shape} with halo={grid.halo}"
+        f"{split if preprocess.margin else ''} "
         f"(reads {grid.read_overhead:.2f}x the volume)",
         flush=True,
     )

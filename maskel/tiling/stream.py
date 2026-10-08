@@ -1,8 +1,8 @@
 """Source file -> thinned skeleton, one tile at a time.
 
 The output ``.npy`` is created up front as a memory map. Each tile is read
-straight out of the source, thinned, and written straight into its core of
-the output, so neither input nor output is ever held in RAM.
+straight out of the source, preprocessed, thinned, and written straight into
+its core of the output, so neither input nor output is ever held in RAM.
 """
 
 from __future__ import annotations
@@ -19,23 +19,34 @@ from maskel.tiling.manifest import (
     SKELETON_NAME,
     DoneLog,
     read_manifest,
+    read_manifest_preprocess,
     write_manifest,
 )
+from maskel.tiling.preprocess import BlockPreprocess
 from maskel.tiling.progress import ProgressReporter
 from maskel.tiling.reader import BlockReader
 
 
-def thin_block(reader: BlockReader, out: np.ndarray, spec: TileSpec) -> None:
-    """Read one block, thin it, write its core into *out*."""
+def thin_block(
+    reader: BlockReader,
+    out: np.ndarray,
+    spec: TileSpec,
+    preprocess: BlockPreprocess | None = None,
+) -> None:
+    """Read one block, preprocess and thin it, write its core into *out*."""
     # The block is ours, so binarising in place is free. Both thinners
     # require a strict 0/1 input.
     block = to_binary(reader.read(spec.read), inplace=True)
 
-    foreground = int(np.count_nonzero(block))
-    if foreground == 0:
-        # Already zero in the output, and the thinners reject empty input.
+    if not block.any():
+        # Already zero in the output, and closing and filling cannot create
+        # foreground from nothing. The thinners reject empty input anyway.
         return
-    if foreground == block.size:
+
+    if preprocess:
+        block = preprocess.apply(block)
+
+    if block.all():
         # No background in core or halo, so the result depends on voxels we
         # did not read.
         raise ValueError(
@@ -48,15 +59,22 @@ def thin_block(reader: BlockReader, out: np.ndarray, spec: TileSpec) -> None:
 
 
 def _resumable_tiles(
-    grid: TileGrid, work_dir: Path, out_path: Path, resume: bool
+    grid: TileGrid,
+    work_dir: Path,
+    out_path: Path,
+    resume: bool,
+    preprocess: BlockPreprocess | None,
 ) -> set[tuple[int, ...]]:
     """Finished tiles from a previous run, if it used this grid and output."""
     if not resume or not out_path.is_file():
         return set()
     if not (Path(work_dir) / MANIFEST_NAME).is_file():
         return set()
+    wanted = preprocess.to_dict() if preprocess else None
     try:
         if read_manifest(work_dir) != grid:
+            return set()
+        if read_manifest_preprocess(work_dir) != wanted:
             return set()
     except (ValueError, KeyError, TypeError):
         return set()
@@ -76,15 +94,17 @@ def skeletonize_streaming(
     *,
     tile_shape: int | tuple[int, ...],
     halo: int = DEFAULT_HALO,
+    preprocess: BlockPreprocess | None = None,
     progress: str | bool = "off",
     out_path: Path | None = None,
     resume: bool = True,
 ) -> Path:
     """Thin *source* tile by tile and return the path of the skeleton ``.npy``.
 
-    *source* is an image path (streamed) or an array. *work_dir* receives
-    ``manifest.json`` and ``done.jsonl``. With *resume*, tiles already in the
-    done log are skipped.
+    *source* is an image path (streamed) or an array. *halo* is what the
+    thinning needs; *preprocess* adds its own margin on top. *work_dir*
+    receives ``manifest.json`` and ``done.jsonl``. With *resume*, tiles already
+    in the done log are skipped.
     """
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -92,11 +112,12 @@ def skeletonize_streaming(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     reader = BlockReader(source)
-    grid = TileGrid(shape=reader.shape, tile_shape=tile_shape, halo=halo)
+    margin = preprocess.margin if preprocess else 0
+    grid = TileGrid(shape=reader.shape, tile_shape=tile_shape, halo=halo + margin)
 
     log = DoneLog(work_dir)
-    already_done = _resumable_tiles(grid, work_dir, out_path, resume)
-    write_manifest(grid, work_dir)
+    already_done = _resumable_tiles(grid, work_dir, out_path, resume, preprocess)
+    write_manifest(grid, work_dir, preprocess)
 
     if already_done:
         # Reuse the previous output; recreating it would zero finished cores.
@@ -114,7 +135,7 @@ def skeletonize_streaming(
         for spec in grid:
             if spec.index in already_done:
                 continue
-            thin_block(reader, out, spec)
+            thin_block(reader, out, spec, preprocess)
             log.record(spec)
             reporter.advance(spec)
     finally:
