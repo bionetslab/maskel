@@ -419,6 +419,52 @@ class TestGaussianFilter:
         assert preprocessed[5, 9] == 1
 
 
+class TestObjectCropPadding:
+    """Preprocessing that grows an object must not be cut off by the
+    per-object crop: the result has to match preprocessing the whole image."""
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"gaussian_sigma": 2.0, "gaussian_threshold": 0.1},
+            {"gaussian_sigma": 2.0, "gaussian_threshold": 0.1, "closing_iterations": 3},
+            {"closing_iterations": 3, "opening_radius": 1},
+        ],
+    )
+    def test_matches_whole_image_preprocessing(self, kwargs):
+        # A blob well inside the image: its bbox + 1 voxel is far from the
+        # array border, so only the crop padding decides what happens.
+        rng = np.random.default_rng(3)
+        mask = np.zeros((48, 48, 48), dtype=np.uint8)
+        blob = ndi.gaussian_filter(rng.random((24, 24, 24)), 2) > 0.5
+        mask[12:36, 12:36, 12:36] = blob
+
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                gaussian_filter="gaussian_sigma" in kwargs,
+                gaussian_sigma=kwargs.get("gaussian_sigma", 1.0),
+                gaussian_threshold=kwargs.get("gaussian_threshold", 0.5),
+                closing_iterations=kwargs.get("closing_iterations", 0),
+                opening_radius=kwargs.get("opening_radius", 0),
+            ),
+            output=OutputConfig(),
+        )
+        result = analyze_segmentation_mask(mask, config)
+
+        expected = preprocess_binary(mask, **kwargs)
+        np.testing.assert_array_equal(result.preprocessed_binary > 0, expected > 0)
+
+    def test_low_threshold_gaussian_grows_past_one_voxel(self):
+        """Guard for the test above: the growth really exceeds the old pad."""
+        mask = np.zeros((40, 40), dtype=np.uint8)
+        mask[15:25, 15:25] = 1
+
+        grown = preprocess_binary(mask, gaussian_sigma=2.0, gaussian_threshold=0.1)
+
+        rows = np.flatnonzero(grown.any(axis=1))
+        assert rows.min() < 15 - 1 and rows.max() > 24 + 1
+
+
 class TestPreprocessBinaryNoOp:
     def test_returns_same_object_when_nothing_requested(self):
         binary = np.zeros((8, 8), dtype=np.uint8)

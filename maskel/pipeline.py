@@ -210,7 +210,10 @@ def preprocess_binary(
         # mode="nearest" repeats the edge voxels outward, so the array border
         # doesn't act as background and eat into objects touching it.
         blurred = ndi.gaussian_filter(
-            result.astype(np.float32), sigma=gaussian_sigma, mode="nearest"
+            result.astype(np.float32),
+            sigma=gaussian_sigma,
+            mode="nearest",
+            truncate=GAUSSIAN_TRUNCATE,
         )
         result = blurred > gaussian_threshold
         del blurred
@@ -237,6 +240,16 @@ def preprocess_binary(
                 result[big[labels]] = False
 
     return result.astype(dtype, copy=False)
+
+
+GAUSSIAN_TRUNCATE = 4.0
+
+
+def gaussian_radius(sigma: float) -> int:
+    """Kernel radius in voxels of the Gaussian in ``preprocess_binary`` -
+    how far a voxel's smoothed value reaches. Same formula scipy uses for
+    ``gaussian_filter(..., truncate=GAUSSIAN_TRUNCATE)``."""
+    return int(GAUSSIAN_TRUNCATE * float(sigma) + 0.5)
 
 
 def _ball_morphology(binary: np.ndarray, radius: int, op: str) -> np.ndarray:
@@ -282,6 +295,20 @@ def _preprocessing_enabled(config: PipelineConfig) -> bool:
         or e.closing_iterations > 0
         or e.fill_holes
     )
+
+
+def _preprocessing_reach(config: PipelineConfig) -> int:
+    """How far (in voxels) the enabled preprocessing steps can reach beyond
+    an object's own bounding box: the Gaussian kernel radius plus 2r for an
+    opening or closing with a ball of radius r. Hole filling only fills
+    enclosed background, so it never reaches outside."""
+    e = config.extraction
+    gaussian = (
+        gaussian_radius(e.gaussian_sigma)
+        if e.gaussian_filter and e.gaussian_sigma > 0
+        else 0
+    )
+    return gaussian + 2 * e.opening_radius + 2 * e.closing_iterations
 
 
 def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray, int]:
@@ -330,6 +357,7 @@ def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
 
 def _iter_object_crops(
     mask: np.ndarray,
+    pad: int = 1,
 ) -> list[tuple[int, tuple[slice, ...], np.ndarray]]:
     """Split a segmentation mask into per-object, bounding-box-cropped binary arrays.
 
@@ -339,10 +367,13 @@ def _iter_object_crops(
     distinct value is its own object - this is how touching-but-distinct
     objects end up correctly separated rather than merged into one skeleton.
 
-    Each crop is the object's bounding box padded by one voxel of background
-    (clamped to the array bounds), so local operations (thinning, closing,
+    Each crop is the object's bounding box padded by *pad* voxels of
+    background (clamped to the array bounds), so local operations (thinning,
     EDT) aren't affected by the crop boundary coinciding with the object's
-    own boundary.
+    own boundary. Preprocessing can grow an object - a Gaussian with a low
+    threshold, or the dilation half of a closing - so the caller widens *pad*
+    by that reach; otherwise the growth is cut off at the crop edge and,
+    because the crop edge is then edge-repeated, fed back in as foreground.
 
     Returns
     -------
@@ -378,7 +409,7 @@ def _iter_object_crops(
     for raw_id, object_id in zip(raw_ids, report_ids, strict=True):
         bbox = bboxes[raw_id - 1]
         padded = tuple(
-            slice(max(s.start - 1, 0), min(s.stop + 1, dim))
+            slice(max(s.start - pad, 0), min(s.stop + pad, dim))
             for s, dim in zip(bbox, mask.shape, strict=True)
         )
         binary_crop = (labels[padded] == raw_id).astype(np.uint8)
@@ -631,7 +662,7 @@ def analyze_segmentation_mask(
 
     logger.info("Processing image of shape %s with spacing %s", mask.shape, spacing)
 
-    object_crops = _iter_object_crops(mask)
+    object_crops = _iter_object_crops(mask, pad=1 + _preprocessing_reach(config))
     logger.info("Processing %d object(s)", len(object_crops))
 
     if not object_crops:
