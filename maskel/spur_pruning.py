@@ -10,11 +10,11 @@ def prune_short_spurs(
     branch_data,
     min_length: float = 10.0,
 ) -> np.ndarray:
-    """Remove short spur branches from a vessel skeleton.
+    """Remove short spur branches from a skeleton.
 
     A spur is a branch that connects an endpoint (degree 1) directly to a
     junction (degree > 1) and is shorter than `min_length` - usually a
-    thinning artifact rather than a real vessel tip. Endpoint-endpoint
+    thinning artifact rather than a real branch tip. Endpoint-endpoint
     branches (isolated segments with no junction) and junction-junction
     branches are left untouched, since neither matches that degree pattern.
 
@@ -23,13 +23,14 @@ def prune_short_spurs(
     skeleton : ndarray
         Binary skeleton array the graph was built from.
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from `build_vessel_graph`).
+        Pre-built skan Skeleton graph (e.g. from `build_skeleton_graph`).
     branch_data : DataFrame
         Branch summary from `skan.summarize(graph, ...)`, in the same row
         order as `graph`'s branches.
     min_length : float, optional
-        Branches shorter than this (``branch-distance``, in pixels)
-        qualify for removal. Default is 10.0.
+        Branches shorter than this (``branch-distance``) qualify for
+        removal - in pixel units, or physical units if `graph` was built
+        with a `spacing`. Default is 10.0.
 
     Returns
     -------

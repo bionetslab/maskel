@@ -21,7 +21,7 @@ from maskel.config import (
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maskel",
-        description="Maskel CLI for batch-vessel-analysis.",
+        description="Maskel CLI for batch mask analysis.",
     )
     parser.add_argument(
         "--version",
@@ -317,7 +317,13 @@ def _run_parallel(
     except KeyboardInterrupt:
         interrupted = True
         print("\nInterrupted by user. Killing workers...", flush=True)
-        ex.kill_workers()
+        # Snapshot the workers first; shutdown() drops the executor's handles.
+        workers = mp.active_children()
+        ex.shutdown(wait=False, cancel_futures=True)
+        for w in workers:
+            w.kill()
+        for w in workers:
+            w.join()
         print("Shutdown complete.", flush=True)
     finally:
         if not interrupted:

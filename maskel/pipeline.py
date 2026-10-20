@@ -14,11 +14,12 @@ from skan import summarize
 
 from maskel.config import PipelineConfig
 from maskel.features import (
-    build_vessel_graph,
+    aggregate_segment_stats,
+    build_skeleton_graph,
     compute_radii,
     compute_tortuosity,
     extract_node_features,
-    extract_vessel_features,
+    extract_summary_features,
     per_segment_radii,
 )
 from maskel.junction_cleanup import collapse_triangle_junctions
@@ -126,47 +127,205 @@ def preprocess_binary(
     closing_iterations: int = 0,
     fill_holes: bool = False,
     max_hole_size: int = 0,
+    gaussian_sigma: float = 0.0,
+    gaussian_threshold: float = 0.5,
+    opening_radius: int = 0,
 ) -> np.ndarray:
     """Apply morphological preprocessing to a binary mask.
+
+    Steps run in this order: Gaussian smoothing, opening, closing, hole
+    filling.
 
     Parameters
     ----------
     binary : ndarray
         Binary uint8 array (0/1).
     closing_iterations : int
-        Number of binary closing iterations (0 = skip).
+        Radius of the ball (3D) / disk (2D) used for binary closing, in
+        voxels (0 = skip). Away from the array border this gives the same
+        result as ``skimage.morphology.closing(binary, ball(r))``; at the
+        border, edge voxels are repeated outward first (see
+        ``_ball_morphology``). A Euclidean ball
+        rather than a cross applied *r* times, which would only reach about
+        r/sqrt(3) along diagonals. The name is kept for config
+        compatibility; radius 1 equals one iteration of the 6/4-connected
+        cross.
     fill_holes : bool
         Whether to fill enclosed background regions.
     max_hole_size : int
         Max hole size in voxels to fill (0 = unlimited).
+    gaussian_sigma : float
+        Standard deviation (in voxels) of a Gaussian blur applied to the
+        0/1 mask before re-binarizing it (0 = skip). Smooths jagged
+        surfaces symmetrically - shaves bumps and fills pits in one step -
+        so, unlike closing or dilation, it doesn't systematically thicken
+        the object. Runs first, before closing and hole filling.
+    gaussian_threshold : float
+        Threshold on the blurred mask (values in [0, 1]); voxels above it
+        become foreground. 0.5 keeps the volume roughly unchanged.
+    opening_radius : int
+        Radius of the ball (3D) / disk (2D) used for binary opening, in
+        voxels (0 = skip). Removes thin bridges, flaps and specks that the
+        ball doesn't fit into. Runs after Gaussian smoothing and before
+        closing; same border handling as the closing.
 
     Returns
     -------
     ndarray
-        Preprocessed binary array.
+        Preprocessed binary array, same dtype as *binary*.
+
+    Notes
+    -----
+    Keeps a single working array through closing/fill-holes instead of
+    round-tripping through *binary*'s original dtype after each step, and
+    avoids ever materializing the extra full-size int8 copies the previous
+    implementation used just to detect which voxels fill_holes changed
+    (``result > before_fill`` gives the same boolean mask directly, and
+    correctly - unlike ``~before_fill``, a bitwise-not on a non-bool array
+    doesn't mean logical negation). ``before_fill`` needs no explicit
+    ``.copy()`` either: ``binary_fill_holes`` never mutates its input in
+    place, so simply not reassigning over the old reference until a new
+    array exists already keeps the "before" snapshot alive.
+
+    This matters beyond avoiding a few small temporaries: on a large 3D
+    volume, connected-component labeling of the filled regions (used to
+    enforce *max_hole_size*) can by itself need far more peak memory than
+    any of maskel's own thinning methods do, since ``scipy.ndimage.label``
+    defaults to a 32-bit label array (4 bytes/voxel). ``_label_compact``
+    below tries a 16-bit array first, which is enough for realistic hole
+    counts and halves that allocation.
     """
+    if (
+        closing_iterations <= 0
+        and opening_radius <= 0
+        and not fill_holes
+        and gaussian_sigma <= 0
+    ):
+        return binary
+
+    dtype = binary.dtype
+    result = binary
+
+    if gaussian_sigma > 0:
+        # mode="nearest" repeats the edge voxels outward, so the array border
+        # doesn't act as background and eat into objects touching it.
+        blurred = ndi.gaussian_filter(
+            result.astype(np.float32), sigma=gaussian_sigma, mode="nearest"
+        )
+        result = blurred > gaussian_threshold
+        del blurred
+
+    if opening_radius > 0:
+        result = _ball_morphology(result, opening_radius, "opening")
+
     if closing_iterations > 0:
-        structure = ndi.generate_binary_structure(binary.ndim, 1)
-        binary = ndi.binary_closing(
-            binary, structure=structure, iterations=closing_iterations
-        ).astype(binary.dtype)
+        result = _ball_morphology(result, closing_iterations, "closing")
 
     if fill_holes:
-        before_fill = binary.copy() if max_hole_size > 0 else None
-        binary = ndi.binary_fill_holes(binary).astype(binary.dtype)
+        before_fill = result if max_hole_size > 0 else None
+        result = ndi.binary_fill_holes(result)
 
         if max_hole_size > 0 and before_fill is not None:
-            diff = binary.astype(np.int8) - before_fill.astype(np.int8)
-            filled = diff > 0
+            filled = result > before_fill
+            del before_fill
             if filled.any():
-                labels, _ = ndi.label(filled)
+                labels, _ = _label_compact(filled)
+                del filled
                 sizes = np.bincount(labels.ravel())
                 big = sizes > max_hole_size
                 big[0] = False
-                revert = big[labels]
-                binary[revert] = 0
+                result[big[labels]] = False
 
-    return binary
+    return result.astype(dtype, copy=False)
+
+
+def _ball_morphology(binary: np.ndarray, radius: int, op: str) -> np.ndarray:
+    """Binary opening or closing with a Euclidean ball of *radius*.
+
+    The array is padded by *radius* with its own edge voxels first. Without
+    padding, scipy treats everything outside the array as background, so
+    the erosion eats up to *radius* voxels into anything touching the array
+    border. Treating the outside as foreground instead (skimage's
+    ``mode="ignore"``) doesn't fit either: objects are processed in tight
+    per-object crops, and it would fill the strip between an object and its
+    crop edge. Repeating the edge voxels does neither - a crop's own 1-voxel
+    background margin stays background, and an object cut off by the real
+    image border continues past it instead of ending there.
+    """
+    footprint = _ball_footprint(binary.ndim, radius)
+    padded = np.pad(binary.astype(bool, copy=False), radius, mode="edge")
+    if op == "opening":
+        padded = ndi.binary_erosion(padded, structure=footprint)
+        padded = ndi.binary_dilation(padded, structure=footprint)
+    elif op == "closing":
+        padded = ndi.binary_dilation(padded, structure=footprint)
+        padded = ndi.binary_erosion(padded, structure=footprint)
+    else:
+        raise ValueError(f"op must be 'opening' or 'closing', got {op!r}")
+    return padded[(slice(radius, -radius),) * binary.ndim]
+
+
+def _ball_footprint(ndim: int, radius: int) -> np.ndarray:
+    """Euclidean ball of *radius* in *ndim* dimensions - the same voxels as
+    ``skimage.morphology.ball`` (3D) / ``disk`` (2D), without needing
+    scikit-image at runtime."""
+    grid = np.ogrid[(slice(-radius, radius + 1),) * ndim]
+    return sum(g**2 for g in grid) <= radius**2
+
+
+def _preprocessing_enabled(config: PipelineConfig) -> bool:
+    """True when any step of ``preprocess_binary`` is switched on."""
+    e = config.extraction
+    return (
+        (e.gaussian_filter and e.gaussian_sigma > 0)
+        or e.opening_radius > 0
+        or e.closing_iterations > 0
+        or e.fill_holes
+    )
+
+
+def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray, int]:
+    """``scipy.ndimage.label`` with the smallest label dtype that fits.
+
+    ``ndi.label`` defaults to a 32-bit label array, which for a large
+    volume is easily the single biggest allocation in
+    ``preprocess_binary``'s hole-filling path - well beyond what any of
+    the thinning methods downstream actually need. Enclosed-hole counts
+    are almost always small, so try *dtype* (16-bit by default) first and
+    only fall back to scipy's own default if there turn out to be more
+    distinct holes than it can represent. scipy raises ``RuntimeError``
+    rather than silently overflowing when a label id doesn't fit, so this
+    can never mislabel anything - only cost a re-run in that rare case.
+
+    *dtype* is a parameter (rather than hardcoded) so tests can force the
+    fallback path with a small, fast array instead of needing tens of
+    thousands of connected components to overflow the real 16-bit default.
+    """
+    try:
+        return ndi.label(mask, output=dtype)
+    except RuntimeError:
+        return ndi.label(mask)
+
+
+def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
+    """True when no two foreground pixels in *skeleton* are adjacent (full
+    connectivity), i.e. every "branch" is an isolated single pixel.
+
+    ``skan.Skeleton`` (via ``build_skeleton_graph``, and via
+    ``collapse_triangle_junctions``'s own call during junction cleanup)
+    requires at least one graph edge to build its sparse path matrix and
+    raises a low-level ``ValueError`` from inside scipy.sparse otherwise -
+    this is checked for up front so a degenerate but perfectly valid input
+    (e.g. a single-pixel object, or a mask whose thinned skeleton happens to
+    leave only isolated points) degrades to the same empty-result path as
+    an all-background skeleton, rather than crashing.
+    """
+    if not skeleton.any():
+        return True
+    structure = ndi.generate_binary_structure(skeleton.ndim, skeleton.ndim)
+    labels, _ = ndi.label(skeleton > 0, structure=structure)
+    sizes = np.bincount(labels.ravel())[1:]  # drop the background (label 0) count
+    return bool(sizes.max() <= 1)
 
 
 def _iter_object_crops(
@@ -264,18 +423,25 @@ def _analyze_single_object(
     global _fractal_anisotropic_warned
     # -- optional: morphological preprocessing -------------------------
     preprocessed_binary: np.ndarray | None = None
-    if config.extraction.closing_iterations > 0 or config.extraction.fill_holes:
+    if _preprocessing_enabled(config):
         binary = preprocess_binary(
             binary,
             closing_iterations=config.extraction.closing_iterations,
+            opening_radius=config.extraction.opening_radius,
             fill_holes=config.extraction.fill_holes,
             max_hole_size=config.extraction.max_hole_size,
+            gaussian_sigma=(
+                config.extraction.gaussian_sigma
+                if config.extraction.gaussian_filter
+                else 0.0
+            ),
+            gaussian_threshold=config.extraction.gaussian_threshold,
         )
         preprocessed_binary = binary
 
     skeleton = lee94_thin(binary)
 
-    if not skeleton.any():
+    if _skeleton_has_no_branches(skeleton):
         return _ObjectResult(
             skeleton=skeleton,
             summary_features={},
@@ -284,23 +450,41 @@ def _analyze_single_object(
             preprocessed_binary=preprocessed_binary,
         )
 
+    # -- pre-compute EDT once for reuse, if anything below needs it ------
+    # `binary` doesn't change from here on (only `skeleton`/`graph` do), so
+    # the same distance transform serves both junction cleanup's temporary
+    # radius matrix and the final mask_radius output below rather than
+    # being recomputed - the EDT is often the most expensive step here,
+    # especially in 3D.
+    edt = None
+    if config.extraction.junction_cleanup or config.extraction.mask_radius:
+        edt = ndi.distance_transform_edt(binary, sampling=spacing)
+
     # -- optional: collapse triangle junction artifacts -----------------
     # (requires EDT; done on the original skeleton before graph building)
     if config.extraction.junction_cleanup:
-        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing)
+        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing, edt=edt)
         skeleton = collapse_triangle_junctions(
             skeleton,
             radius_matrix=rm_temp,
             threshold_factor=config.extraction.cleanup_threshold_factor,
         )
+        if _skeleton_has_no_branches(skeleton):
+            return _ObjectResult(
+                skeleton=skeleton,
+                summary_features={},
+                branch_records=[],
+                node_records=[],
+                preprocessed_binary=preprocessed_binary,
+            )
 
     # -- build graph & branch data on the (potentially cleaned) skeleton -
-    graph = build_vessel_graph(skeleton, spacing=spacing)
+    graph = build_skeleton_graph(skeleton, spacing=spacing)
 
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction
     # (degree > 1), and the branch is shorter than the configured
-    # threshold - usually a thinning artifact rather than a real vessel
+    # threshold - usually a thinning artifact rather than a real branch
     # tip. Pruning changes the skeleton's pixels, so the graph is rebuilt
     # from scratch afterwards.)
     if config.extraction.prune_spurs:
@@ -315,7 +499,7 @@ def _analyze_single_object(
                 pre_prune_branch_data,
                 min_length=config.extraction.min_spur_length,
             )
-            if not skeleton.any():
+            if _skeleton_has_no_branches(skeleton):
                 return _ObjectResult(
                     skeleton=skeleton,
                     summary_features={},
@@ -323,13 +507,15 @@ def _analyze_single_object(
                     node_records=[],
                     preprocessed_binary=preprocessed_binary,
                 )
-            graph = build_vessel_graph(skeleton, spacing=spacing)
+            graph = build_skeleton_graph(skeleton, spacing=spacing)
 
     # -- optional: mask radius (EDT on the final skeleton) --------------
     radius_matrix = None
     radius_stats = None
     if config.extraction.mask_radius:
-        radius_matrix, radius_stats = compute_radii(binary, skeleton, spacing=spacing)
+        radius_matrix, radius_stats = compute_radii(
+            binary, skeleton, spacing=spacing, edt=edt
+        )
 
     branch_data = summarize(graph, separator="-")
 
@@ -341,12 +527,7 @@ def _analyze_single_object(
             branch_data[key] = arr
 
         if radius_stats is not None:
-            radius_stats["mean_segment_volume"] = float(
-                np.nanmean(branch_data["volume"])
-            )
-            radius_stats["mean_surface_area"] = float(
-                np.nanmean(branch_data["surface_area"])
-            )
+            radius_stats.update(aggregate_segment_stats(branch_data))
 
     if not branch_data.empty:
         euclidean = branch_data["euclidean-distance"].to_numpy(dtype=float)
@@ -380,7 +561,7 @@ def _analyze_single_object(
 
     summary_features: dict[str, float] = {}
     if config.extraction.summary:
-        summary_features = extract_vessel_features(
+        summary_features = extract_summary_features(
             skeleton,
             graph,
             branch_data,
@@ -463,9 +644,7 @@ def analyze_segmentation_mask(
         )
 
     want_radius = config.extraction.mask_radius
-    want_preprocessed = (
-        config.extraction.closing_iterations > 0 or config.extraction.fill_holes
-    )
+    want_preprocessed = _preprocessing_enabled(config)
 
     full_skeleton = np.zeros(mask.shape, dtype=np.uint8)
     full_radius = np.zeros(mask.shape, dtype=np.float64) if want_radius else None

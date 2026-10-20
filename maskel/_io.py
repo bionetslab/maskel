@@ -9,6 +9,7 @@ from pathlib import Path
 
 import itk
 import numpy as np
+import tifffile
 from PIL import Image
 
 from maskel.config import OutputConfig
@@ -23,12 +24,7 @@ def load_image(path: Path) -> np.ndarray:
     elif suffix == ".mhd":
         arr = np.asarray(itk.imread(str(path)))
     elif suffix in (".tif", ".tiff"):
-        # Use tifffile rather than PIL: PIL reads only the *first frame* of a
-        # multi-page/volumetric TIFF, silently turning a 3D stack into one
-        # slice. tifffile loads the full volume.
-        import tifffile
-
-        arr = tifffile.imread(str(path))
+        arr = np.asarray(tifffile.imread(str(path)))
     else:
         with Image.open(path) as im:
             arr = np.asarray(im)
@@ -72,7 +68,7 @@ def save_skeleton(
     png: bool = False,
 ) -> None:
     if npy:
-        np.save(path.with_suffix(".npy"), skeleton.astype(np.uint8))
+        np.save(path.with_suffix(".npy"), skeleton.astype(np.uint8, copy=False))
     if png:
         if skeleton.ndim != 2:
             print(
@@ -86,7 +82,7 @@ def save_skeleton(
 
 
 def save_radius(path: Path, radius_matrix: np.ndarray) -> None:
-    np.save(path.with_suffix(".npy"), radius_matrix.astype(np.float64))
+    np.save(path.with_suffix(".npy"), radius_matrix.astype(np.float64, copy=False))
 
 
 def save_analysis_outputs(

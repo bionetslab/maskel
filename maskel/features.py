@@ -10,7 +10,7 @@ from ._utils import to_binary
 
 @njit(parallel=True, cache=True)
 def _box_count_2d(img: np.ndarray, scale: int) -> int:
-    """Count occupied boxes of side `scale` in a 2D binary image."""
+    """Count occupied boxes of size `scale` in a 2D binary image."""
     H, W = img.shape
     nh = (H + scale - 1) // scale
     nw = (W + scale - 1) // scale
@@ -36,7 +36,7 @@ def _box_count_2d(img: np.ndarray, scale: int) -> int:
 
 @njit(parallel=True, cache=True)
 def _box_count_3d(img: np.ndarray, scale: int) -> int:
-    """Count occupied boxes of side `scale` in a 3D binary volume."""
+    """Count occupied boxes of size `scale` in a 3D binary volume."""
     D, H, W = img.shape
     nd = (D + scale - 1) // scale
     nh = (H + scale - 1) // scale
@@ -125,22 +125,32 @@ def compute_radii(
     binary: np.ndarray,
     skeleton: np.ndarray,
     spacing: tuple[float, ...] | None = None,
+    *,
+    edt: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, float]]:
-    """Compute vessel radii via Euclidean distance transform of the binary mask.
+    """Compute local radii via Euclidean distance transform of the binary mask.
 
     The distance transform gives each foreground pixel its distance to the
     nearest background pixel. Sampling these values at skeleton positions
-    yields the local vessel radius at every centerline point.
+    yields the local radius at every centerline point.
 
     Parameters
     ----------
     binary : ndarray
-        Binary vessel mask (foreground > 0).
+        Binary mask (foreground > 0).
     skeleton : ndarray
         Binary skeleton of the same shape.
     spacing : tuple[float, ...], optional
         Per-axis physical size of one pixel/voxel. ``None`` (the default)
         keeps isotropic unit spacing, matching scipy's own default.
+    edt : ndarray, optional
+        Pre-computed Euclidean distance transform of *binary* (same shape),
+        for a caller that already has one from an earlier call on this same
+        *binary* - e.g. the pipeline calling this once before junction
+        cleanup and again afterwards for the final radius matrix, where only
+        the skeleton positions being sampled change, not the underlying
+        mask. Computed internally via ``distance_transform_edt`` when not
+        given.
 
     Returns
     -------
@@ -151,9 +161,11 @@ def compute_radii(
         ``min_radius``, ``max_radius``, ``mean_diameter``, ``std_diameter``,
         ``min_diameter``, ``max_diameter``).
     """
-    edt = distance_transform_edt(binary, sampling=spacing)
+    if edt is None:
+        edt = distance_transform_edt(binary, sampling=spacing)
     radius_matrix = np.zeros_like(binary, dtype=np.float64)
-    radius_matrix[skeleton > 0] = edt[skeleton > 0]
+    skeleton_mask = skeleton > 0
+    radius_matrix[skeleton_mask] = edt[skeleton_mask]
 
     radii = radius_matrix[radius_matrix > 0]
     if radii.size:
@@ -263,10 +275,10 @@ def per_segment_radii(
     }
 
 
-def build_vessel_graph(
+def build_skeleton_graph(
     skeleton: np.ndarray, spacing: tuple[float, ...] | None = None
 ) -> Skeleton:
-    """Build a graph representation from a binary vessel skeleton.
+    """Build a graph representation from a binary skeleton.
 
     Parameters
     ----------
@@ -350,14 +362,44 @@ _EMPTY_FEATURES: dict[str, float] = {
     "std_diameter": 0.0,
     "min_diameter": 0.0,
     "max_diameter": 0.0,
-    "vessel_area": 0.0,
-    "vessel_area_fraction": 0.0,
+    "mask_area": 0.0,
+    "mask_area_fraction": 0.0,
     "mean_segment_volume": 0.0,
     "mean_surface_area": 0.0,
 }
 
 
-def extract_vessel_features(
+_RADIUS_STATS_DEFAULTS: dict[str, float] = {
+    "mean_radius": 0.0,
+    "std_radius": 0.0,
+    "min_radius": 0.0,
+    "max_radius": 0.0,
+    "mean_diameter": 0.0,
+    "std_diameter": 0.0,
+    "min_diameter": 0.0,
+    "max_diameter": 0.0,
+    "mean_segment_volume": 0.0,
+    "mean_surface_area": 0.0,
+}
+
+
+def aggregate_segment_stats(branch_data) -> dict[str, float]:
+    """Object-level aggregates of the per-branch ``volume``/``surface_area``
+    columns produced by `per_segment_radii` (mean across this object's
+    branches).
+
+    Requires *branch_data* to already carry those two columns (only true
+    after `per_segment_radii`'s output has been merged into it) and to be
+    non-empty - a caller that hasn't done that, or has no branches, should
+    not call this.
+    """
+    return {
+        "mean_segment_volume": float(np.nanmean(branch_data["volume"])),
+        "mean_surface_area": float(np.nanmean(branch_data["surface_area"])),
+    }
+
+
+def extract_summary_features(
     skeleton: np.ndarray,
     graph: Skeleton,
     branch_data,
@@ -367,7 +409,7 @@ def extract_vessel_features(
     radius_stats: dict[str, float] | None = None,
     spacing: tuple[float, ...] | None = None,
 ) -> dict[str, float]:
-    """Extract graph-topology and segment statistics from a vessel skeleton.
+    """Extract graph-topology and segment statistics from a skeleton.
 
     Parameters
     ----------
@@ -375,30 +417,40 @@ def extract_vessel_features(
         Binary 2D or 3D skeleton array. Used only for fractal dimension
         computation, not for graph topology.
     graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from `build_vessel_graph`).
+        Pre-built skan Skeleton graph (e.g. from `build_skeleton_graph`).
     branch_data : DataFrame
         Pre-computed branch summary (e.g. from `skan.summarize(graph, ...)`).
     binary : ndarray
-        Original binary mask. Used to compute ``vessel_area`` and
-        ``vessel_area_fraction``.
+        Original binary mask. Used to compute ``mask_area`` and
+        ``mask_area_fraction``.
     include_fractal : bool, optional
         Whether to compute fractal dimension (expensive-ish). Default is True.
     radius_stats : dict[str, float], optional
-        Pre-computed radius/diameter statistics from `compute_radii`.
-        When None, radius features default to zero.
+        Pre-computed radius/diameter statistics from `compute_radii`
+        (``mean_radius``, ``std_radius``, ``min_radius``, ``max_radius``,
+        ``mean_diameter``, ``std_diameter``, ``min_diameter``,
+        ``max_diameter``). Note ``compute_radii`` alone does *not* produce
+        ``mean_segment_volume``/``mean_surface_area`` - those are
+        branch-level aggregates from `aggregate_segment_stats`, which needs
+        `per_segment_radii`'s output merged into *branch_data* first. Any
+        key missing from *radius_stats* (including both of those, if you
+        only ran `compute_radii`) defaults to ``0.0`` rather than being
+        silently dropped from the returned dict - the schema is always the
+        same 10 keys regardless of what *radius_stats* actually supplies.
+        ``None`` defaults every one of them to ``0.0``.
     spacing : tuple[float, ...], optional
         Per-axis physical size of one pixel/voxel. When given, scales
-        ``vessel_area`` from a raw pixel/voxel count into physical units
-        (``vessel_area_fraction`` needs no change since it's a ratio and
+        ``mask_area`` from a raw pixel/voxel count into physical units
+        (``mask_area_fraction`` needs no change since it's a ratio and
         the scaling cancels). ``None`` (the default) keeps pixel units.
     """
     if branch_data.empty:
         return dict(_EMPTY_FEATURES)
 
-    vessel_area = float(np.count_nonzero(binary))
+    mask_area = float(np.count_nonzero(binary))
     if spacing is not None:
-        vessel_area *= float(np.prod(spacing))
-    vessel_area_fraction = float(np.count_nonzero(binary)) / float(binary.size)
+        mask_area *= float(np.prod(spacing))
+    mask_area_fraction = float(np.count_nonzero(binary)) / float(binary.size)
 
     fd, fd_r2 = fractal_dimension(skeleton) if include_fractal else (0.0, 0.0)
 
@@ -463,21 +515,11 @@ def extract_vessel_features(
 
     hgu = total_length / float(num_endpoints) if num_endpoints else 0.0
 
-    if radius_stats is not None:
-        radius = radius_stats
-    else:
-        radius = {
-            "mean_radius": 0.0,
-            "std_radius": 0.0,
-            "min_radius": 0.0,
-            "max_radius": 0.0,
-            "mean_diameter": 0.0,
-            "std_diameter": 0.0,
-            "min_diameter": 0.0,
-            "max_diameter": 0.0,
-            "mean_segment_volume": 0.0,
-            "mean_surface_area": 0.0,
-        }
+    radius_stats = radius_stats or {}
+    radius = {
+        key: radius_stats.get(key, default)
+        for key, default in _RADIUS_STATS_DEFAULTS.items()
+    }
 
     return {
         "num_nodes": float(num_nodes),
@@ -497,7 +539,7 @@ def extract_vessel_features(
         "fractal_dimension": fd,
         "fractal_dimension_r2": fd_r2,
         "hgu": hgu,
-        "vessel_area": vessel_area,
-        "vessel_area_fraction": vessel_area_fraction,
+        "mask_area": mask_area,
+        "mask_area_fraction": mask_area_fraction,
         **radius,
     }

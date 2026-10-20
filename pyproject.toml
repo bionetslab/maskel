@@ -1,7 +1,7 @@
 [project]
 name = "maskel"
 license = "MIT"
-version = "1.1.0"
+version = "2.0.2"
 description = "2D and 3D Skeletonization and Graph-based Analysis"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -12,16 +12,15 @@ dependencies = [
     "numba>=0.65.0",
     "numpy>=2.4.4",
     "pillow>=12.2.0",
-    "pyyaml>=6.0.3",
     "scipy>=1.17.1",
     "skan>=0.13.1",
-    "tifffile>=2026.1.10",
+    "tifffile>=2026.3.3",
 ]
 
 [project.urls]
 Homepage = "https://github.com/bionetslab/maskel"
 Repository = "https://github.com/bionetslab/maskel"
-Documentation = "https://github.com/bionetslab/maskel#readme"
+Documentation = "https://bionetslab.github.io/maskel/"
 Changelog = "https://github.com/bionetslab/maskel/releases"
 
 [project.optional-dependencies]
@@ -30,6 +29,10 @@ dev = [
     "pooch>=1.9.0",
     "scikit-image>=0.26.0",
     "nibabel>=5.4.2",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
 ]
 
 [build-system]

@@ -109,6 +109,13 @@ def thin_2d(img):
     """
     if img.ndim != 2:
         raise ValueError(f"Expected 2D input, got {img.ndim}D")
+    if img.min() == img.max():
+        # Uniformly all-background or all-foreground: nothing to thin either
+        # way (there's no boundary to erode from), so short-circuit to an
+        # empty result instead of tripping the binary-range check below.
+        if img.min() not in (0, 1):
+            raise ValueError("Input must be binary [0, 1]")
+        return np.zeros(img.shape, dtype=np.uint8)
     if img.min() != 0 or img.max() != 1:
         raise ValueError("Input must be binary [0, 1]")
     h, w = img.shape
