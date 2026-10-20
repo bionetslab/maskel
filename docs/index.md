@@ -90,9 +90,13 @@ A config JSON has two sections, `extraction` and `output` (plus a `schema_versio
 
 ### Cleanup
 
+- `extraction.gaussian_filter` (bool, default `false`) — smooth the mask with a Gaussian blur and re-binarize it before thinning. Runs first, before closing and hole filling. Evens out jagged surfaces (shaves bumps, fills pits) without systematically thickening the object.
+- `extraction.gaussian_sigma` (float, default `1.0`) — standard deviation of the blur in voxels. Keep it well below the thickness of the thinnest real structure.
+- `extraction.gaussian_threshold` (float, default `0.5`) — threshold on the blurred mask (values in `[0, 1]`); `0.5` keeps the volume roughly unchanged, lower values grow the mask, higher values shrink it.
 - `extraction.fill_holes` (bool, default `false`) — fill holes in the binary segmentation before thinning.
 - `extraction.max_hole_size` (int, default `0`) — maximum hole area (px) to fill when `fill_holes` is true; `0` fills all holes.
-- `extraction.closing_iterations` (int, default `0`) — morphological closing iterations applied before thinning; `0` disables it.
+- `extraction.opening_radius` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological opening before thinning; `0` disables it. Removes thin bridges, flaps and specks the ball doesn't fit into. Runs after Gaussian smoothing and before the closing. Same border handling as the closing.
+- `extraction.closing_iterations` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological closing before thinning; `0` disables it. Away from the array border this gives the same result as `skimage.morphology.closing(mask, ball(r))`. At the border, the edge voxels are repeated outward first, so objects touching it are neither eroded nor treated as ending there (skimage instead treats the outside as foreground, which also fills background strips narrower than the radius along the border). (The key keeps its old name for config compatibility; radius 1 equals one iteration of the old cross-shaped closing.)
 - `extraction.show_preprocessed` (bool, default `false`) — whether napari-maskel adds a layer showing the mask after preprocessing. Purely a display toggle for the plugin; the CLI has no output file for the preprocessed mask.
 - `extraction.junction_cleanup` (bool, default `false`) — clean up ambiguous junction pixel clusters left behind by thinning.
 - `extraction.cleanup_threshold_factor` (float, default `2.5`) — sensitivity for the above; higher values collapse larger clusters.
