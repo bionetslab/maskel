@@ -46,18 +46,6 @@ class TestExtractionConfig:
         restored = ExtractionConfig.from_dict(original.to_dict())
         assert restored == original
 
-    def test_gaussian_defaults_and_round_trip(self):
-        c = ExtractionConfig()
-        assert (c.gaussian_filter, c.gaussian_sigma, c.gaussian_threshold) == (
-            False,
-            1.0,
-            0.5,
-        )
-        original = ExtractionConfig(
-            gaussian_filter=True, gaussian_sigma=1.5, gaussian_threshold=0.4
-        )
-        assert ExtractionConfig.from_dict(original.to_dict()) == original
-
     def test_opening_radius_default_and_round_trip(self):
         assert ExtractionConfig().opening_radius == 0
         original = ExtractionConfig(opening_radius=2)

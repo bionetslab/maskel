@@ -127,14 +127,11 @@ def preprocess_binary(
     closing_iterations: int = 0,
     fill_holes: bool = False,
     max_hole_size: int = 0,
-    gaussian_sigma: float = 0.0,
-    gaussian_threshold: float = 0.5,
     opening_radius: int = 0,
 ) -> np.ndarray:
     """Apply morphological preprocessing to a binary mask.
 
-    Steps run in this order: Gaussian smoothing, opening, closing, hole
-    filling.
+    Steps run in this order: opening, closing, hole filling.
 
     Parameters
     ----------
@@ -154,20 +151,11 @@ def preprocess_binary(
         Whether to fill enclosed background regions.
     max_hole_size : int
         Max hole size in voxels to fill (0 = unlimited).
-    gaussian_sigma : float
-        Standard deviation (in voxels) of a Gaussian blur applied to the
-        0/1 mask before re-binarizing it (0 = skip). Smooths jagged
-        surfaces symmetrically - shaves bumps and fills pits in one step -
-        so, unlike closing or dilation, it doesn't systematically thicken
-        the object. Runs first, before closing and hole filling.
-    gaussian_threshold : float
-        Threshold on the blurred mask (values in [0, 1]); voxels above it
-        become foreground. 0.5 keeps the volume roughly unchanged.
     opening_radius : int
         Radius of the ball (3D) / disk (2D) used for binary opening, in
         voxels (0 = skip). Removes thin bridges, flaps and specks that the
-        ball doesn't fit into. Runs after Gaussian smoothing and before
-        closing; same border handling as the closing.
+        ball doesn't fit into. Runs before the closing; same border
+        handling as the closing.
 
     Returns
     -------
@@ -195,28 +183,11 @@ def preprocess_binary(
     below tries a 16-bit array first, which is enough for realistic hole
     counts and halves that allocation.
     """
-    if (
-        closing_iterations <= 0
-        and opening_radius <= 0
-        and not fill_holes
-        and gaussian_sigma <= 0
-    ):
+    if closing_iterations <= 0 and opening_radius <= 0 and not fill_holes:
         return binary
 
     dtype = binary.dtype
     result = binary
-
-    if gaussian_sigma > 0:
-        # mode="nearest" repeats the edge voxels outward, so the array border
-        # doesn't act as background and eat into objects touching it.
-        blurred = ndi.gaussian_filter(
-            result.astype(np.float32),
-            sigma=gaussian_sigma,
-            mode="nearest",
-            truncate=GAUSSIAN_TRUNCATE,
-        )
-        result = blurred > gaussian_threshold
-        del blurred
 
     if opening_radius > 0:
         result = _ball_morphology(result, opening_radius, "opening")
@@ -240,16 +211,6 @@ def preprocess_binary(
                 result[big[labels]] = False
 
     return result.astype(dtype, copy=False)
-
-
-GAUSSIAN_TRUNCATE = 4.0
-
-
-def gaussian_radius(sigma: float) -> int:
-    """Kernel radius in voxels of the Gaussian in ``preprocess_binary`` -
-    how far a voxel's smoothed value reaches. Same formula scipy uses for
-    ``gaussian_filter(..., truncate=GAUSSIAN_TRUNCATE)``."""
-    return int(GAUSSIAN_TRUNCATE * float(sigma) + 0.5)
 
 
 def _ball_morphology(binary: np.ndarray, radius: int, op: str) -> np.ndarray:
@@ -289,26 +250,17 @@ def _ball_footprint(ndim: int, radius: int) -> np.ndarray:
 def _preprocessing_enabled(config: PipelineConfig) -> bool:
     """True when any step of ``preprocess_binary`` is switched on."""
     e = config.extraction
-    return (
-        (e.gaussian_filter and e.gaussian_sigma > 0)
-        or e.opening_radius > 0
-        or e.closing_iterations > 0
-        or e.fill_holes
-    )
+    return e.opening_radius > 0 or e.closing_iterations > 0 or e.fill_holes
 
 
 def _preprocessing_reach(config: PipelineConfig) -> int:
-    """How far (in voxels) the enabled preprocessing steps can reach beyond
-    an object's own bounding box: the Gaussian kernel radius plus 2r for an
+    """How far (in voxels) the enabled preprocessing steps reach: 2r for an
     opening or closing with a ball of radius r. Hole filling only fills
-    enclosed background, so it never reaches outside."""
+    enclosed background, so it never reaches outside. Neither opening nor
+    closing grows an object past its bounding box, so this is a safety
+    margin for the crop rather than room the result needs."""
     e = config.extraction
-    gaussian = (
-        gaussian_radius(e.gaussian_sigma)
-        if e.gaussian_filter and e.gaussian_sigma > 0
-        else 0
-    )
-    return gaussian + 2 * e.opening_radius + 2 * e.closing_iterations
+    return 2 * e.opening_radius + 2 * e.closing_iterations
 
 
 def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray, int]:
@@ -370,10 +322,9 @@ def _iter_object_crops(
     Each crop is the object's bounding box padded by *pad* voxels of
     background (clamped to the array bounds), so local operations (thinning,
     EDT) aren't affected by the crop boundary coinciding with the object's
-    own boundary. Preprocessing can grow an object - a Gaussian with a low
-    threshold, or the dilation half of a closing - so the caller widens *pad*
-    by that reach; otherwise the growth is cut off at the crop edge and,
-    because the crop edge is then edge-repeated, fed back in as foreground.
+    own boundary. The caller widens *pad* by the preprocessing reach (see
+    ``_preprocessing_reach``), so the crop edge stays background for the
+    opening and closing, whose padding repeats the crop's edge voxels.
 
     Returns
     -------
@@ -461,12 +412,6 @@ def _analyze_single_object(
             opening_radius=config.extraction.opening_radius,
             fill_holes=config.extraction.fill_holes,
             max_hole_size=config.extraction.max_hole_size,
-            gaussian_sigma=(
-                config.extraction.gaussian_sigma
-                if config.extraction.gaussian_filter
-                else 0.0
-            ),
-            gaussian_threshold=config.extraction.gaussian_threshold,
         )
         preprocessed_binary = binary
 
