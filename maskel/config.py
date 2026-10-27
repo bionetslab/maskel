@@ -79,9 +79,6 @@ class ExtractionConfig:
     prune_spurs: bool = False
     min_spur_length: float = 10.0
     spur_iterations: int = 1
-    gaussian_filter: bool = False
-    gaussian_sigma: float = 1.0
-    gaussian_threshold: float = 0.5
     opening_radius: int = 0
     closing_iterations: int = 0
     fill_holes: bool = False
@@ -103,9 +100,6 @@ class ExtractionConfig:
             "prune_spurs": self.prune_spurs,
             "min_spur_length": self.min_spur_length,
             "spur_iterations": self.spur_iterations,
-            "gaussian_filter": self.gaussian_filter,
-            "gaussian_sigma": self.gaussian_sigma,
-            "gaussian_threshold": self.gaussian_threshold,
             "opening_radius": self.opening_radius,
             "closing_iterations": self.closing_iterations,
             "fill_holes": self.fill_holes,

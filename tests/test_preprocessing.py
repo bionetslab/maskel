@@ -350,73 +350,37 @@ class TestPreprocessedBinaryMultiObject:
         assert np.issubdtype(result.preprocessed_binary.dtype, np.integer)
 
 
-class TestGaussianFilter:
-    def test_fills_pit_and_removes_bump(self):
-        block = np.zeros((20, 20), dtype=np.uint8)
-        block[5:15, 5:15] = 1
-        block[5, 9] = 0  # 1px pit in the top edge
-        block[15, 9] = 1  # 1px bump on the bottom edge
+class TestObjectCropPadding:
+    """Per-object preprocessing has to match preprocessing the whole image:
+    the crop edge must not change the result of the opening or closing."""
 
-        result = preprocess_binary(block, gaussian_sigma=1.0, gaussian_threshold=0.5)
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"closing_iterations": 3},
+            {"opening_radius": 2},
+            {"closing_iterations": 3, "opening_radius": 1},
+        ],
+    )
+    def test_matches_whole_image_preprocessing(self, kwargs):
+        # A blob well inside the image: its bbox + 1 voxel is far from the
+        # array border, so only the crop padding decides what happens.
+        rng = np.random.default_rng(3)
+        mask = np.zeros((48, 48, 48), dtype=np.uint8)
+        blob = ndi.gaussian_filter(rng.random((24, 24, 24)), 2) > 0.5
+        mask[12:36, 12:36, 12:36] = blob
 
-        assert result.dtype == block.dtype
-        assert result[5, 9] == 1
-        assert result[15, 9] == 0
-        # the body of the block is untouched
-        assert result[6:14, 6:14].all()
-
-    def test_does_not_erode_at_array_border(self):
-        # an object running into the array edge must not lose voxels there
-        slab = np.zeros((12, 12), dtype=np.uint8)
-        slab[:, 3:9] = 1
-
-        result = preprocess_binary(slab, gaussian_sigma=1.0)
-
-        np.testing.assert_array_equal(result, slab)
-
-    def test_threshold_controls_growth(self):
-        block = np.zeros((20, 20), dtype=np.uint8)
-        block[5:15, 5:15] = 1
-
-        low = preprocess_binary(block, gaussian_sigma=1.0, gaussian_threshold=0.2)
-        high = preprocess_binary(block, gaussian_sigma=1.0, gaussian_threshold=0.8)
-
-        assert low.sum() > block.sum() > high.sum()
-
-    def test_runs_before_closing(self):
-        # Two 3px-thick bars with a 3px gap: closing(1) alone can't bridge it
-        # (see TestClosing), but blurring with a low threshold first grows
-        # both bars enough that the closing then fills what's left.
-        bars = np.zeros((16, 20), dtype=np.uint8)
-        bars[6:9, 2:8] = 1
-        bars[6:9, 11:18] = 1
-
-        closing_only = preprocess_binary(bars, closing_iterations=1)
-        both = preprocess_binary(
-            bars, closing_iterations=1, gaussian_sigma=1.0, gaussian_threshold=0.2
+        config = PipelineConfig(
+            extraction=ExtractionConfig(
+                closing_iterations=kwargs.get("closing_iterations", 0),
+                opening_radius=kwargs.get("opening_radius", 0),
+            ),
+            output=OutputConfig(),
         )
+        result = analyze_segmentation_mask(mask, config)
 
-        assert not closing_only[7, 8:11].all()
-        assert both[7, 8:11].all()
-
-    def test_pipeline_applies_it_only_when_enabled(self):
-        block = np.zeros((20, 20), dtype=np.uint8)
-        block[5:15, 5:15] = 1
-        block[5, 9] = 0
-
-        def run(enabled: bool):
-            config = PipelineConfig(
-                extraction=ExtractionConfig(
-                    gaussian_filter=enabled, gaussian_sigma=1.0, show_preprocessed=True
-                ),
-                output=OutputConfig(),
-            )
-            return analyze_segmentation_mask(block, config)
-
-        assert run(False).preprocessed_binary is None
-        preprocessed = run(True).preprocessed_binary
-        assert preprocessed is not None
-        assert preprocessed[5, 9] == 1
+        expected = preprocess_binary(mask, **kwargs)
+        np.testing.assert_array_equal(result.preprocessed_binary > 0, expected > 0)
 
 
 class TestPreprocessBinaryNoOp:

@@ -112,14 +112,14 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         help="Voxels read beyond each tile core for the thinning "
         "(default: 100). Must exceed the thinning's reach, roughly 8x the "
-        "largest vessel radius in 3D. Closing and hole filling add their own "
-        "margin on top of this.",
+        "largest vessel radius in 3D. Opening, closing and hole filling add "
+        "their own margin on top of this.",
     )
     skel_parser.add_argument(
         "--config",
-        help="Optional config JSON. Closing and hole filling run per tile "
-        "(fill_holes needs max_hole_size); anything after the thinning, such "
-        "as junction cleanup, is rejected rather than ignored.",
+        help="Optional config JSON. Opening, closing and hole filling run per "
+        "tile (fill_holes needs max_hole_size); anything after the thinning, "
+        "such as junction cleanup, is rejected rather than ignored.",
     )
     skel_parser.add_argument(
         "--progress",

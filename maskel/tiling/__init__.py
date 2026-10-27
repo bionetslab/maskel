@@ -4,10 +4,17 @@ Thinning is a local operation, so a tile can be thinned on its own as long as
 it is read with a halo wider than the algorithm's reach. Only the halo-free
 core of each thinned tile is kept, and the cores tile the volume exactly.
 
-Closing and hole filling are local too, given enough halo, so they run on each
-block just before its thinning - no extra pass, no intermediate volume::
+Opening, closing and hole filling are local too, given enough halo, so they
+run on each block just before its thinning - no extra pass, no intermediate
+volume. Their reaches add up::
 
-    grid halo = thinning halo + 2 * closing_iterations + max_hole_size
+    grid halo = thinning halo
+                + 2 * opening_radius
+                + 2 * closing_iterations
+                + max_hole_size
+
+Block edges are padded by repeating edge voxels, which is wrong except at the
+real volume border; the margin keeps that error out of what the thinning sees.
 
 Hole filling needs `max_hole_size`, because an unbounded hole can span the
 whole volume. It can never over-fill: a block-enclosed background region is

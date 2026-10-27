@@ -8,7 +8,7 @@ Every feature maskel can extract, grouped by the level it's computed at and name
 
 One row per object per image. Requires `extraction.summary` (on by default); most fields need other options too, as noted.
 
-Every mask-derived field below (`mask_area`, `mask_area_fraction`, and the radius/diameter statistics) is measured against the mask *after* preprocessing — if `extraction.gaussian_filter`, `extraction.opening_radius`, `extraction.closing_iterations` or `extraction.fill_holes` is set, that's the modified mask, not the raw input crop.
+Every mask-derived field below (`mask_area`, `mask_area_fraction`, and the radius/diameter statistics) is measured against the mask *after* preprocessing — if `extraction.opening_radius`, `extraction.closing_iterations` or `extraction.fill_holes` is set, that's the modified mask, not the raw input crop.
 
 - `object_id` — the mask's own label value for this object (`1` for a plain binary mask).
 - `num_nodes` — number of distinct graph nodes (junctions/endpoints) referenced by any branch in this object.

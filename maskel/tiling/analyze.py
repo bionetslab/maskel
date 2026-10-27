@@ -15,6 +15,7 @@ from maskel.tiling.stream import skeletonize_streaming
 def preprocess_from_config(extraction: ExtractionConfig) -> BlockPreprocess:
     """The preprocessing steps the tiled path runs on every block."""
     return BlockPreprocess(
+        opening_radius=extraction.opening_radius,
         closing_iterations=extraction.closing_iterations,
         fill_holes=extraction.fill_holes,
         max_hole_size=extraction.max_hole_size,
@@ -44,7 +45,7 @@ def analyze_tiled(
 ) -> None:
     """Thin *source* into ``work_dir/<base_name>_skeleton.npy``.
 
-    Closing and bounded hole filling run per block; nothing after the thinning
+    Opening, closing and bounded hole filling run per block; nothing after the thinning
     does - no junction cleanup, spur pruning, radii, graph or features.
     Configuring any of those raises instead of being silently skipped. Every
     nonzero value is foreground, so an instance segmentation is thinned as one
