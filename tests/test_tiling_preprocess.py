@@ -10,7 +10,7 @@ import pytest
 from scipy import ndimage as ndi
 
 from maskel.config import ExtractionConfig
-from maskel.pipeline import preprocess_binary
+from maskel.preprocessing import preprocess_binary
 from maskel.thin import lee94_thin
 from maskel.tiling import BlockPreprocess, TileGrid, preprocess_from_config
 from maskel.tiling.stream import skeletonize_streaming

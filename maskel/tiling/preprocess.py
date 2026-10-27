@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from maskel.pipeline import preprocess_binary
+from maskel.preprocessing import preprocess_binary
 
 
 @dataclass(frozen=True)

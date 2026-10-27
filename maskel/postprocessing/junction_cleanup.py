@@ -6,7 +6,7 @@ import numpy as np
 from skan import summarize
 from skan.csr import Skeleton, nx_to_skeleton, skeleton_to_nx
 
-from ._utils import to_binary
+from maskel._utils import to_binary
 
 
 def _bresenham_line(

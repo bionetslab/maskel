@@ -7,7 +7,7 @@ from skimage import data
 from skimage.morphology import skeletonize
 
 from maskel.thin import lee94_thin
-from maskel.thin_2d import thin_2d
+from maskel.thin.thin_2d import thin_2d
 
 
 class TestBinaryGuard:

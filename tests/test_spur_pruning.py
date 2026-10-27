@@ -2,7 +2,7 @@ import numpy as np
 from skan import summarize
 
 from maskel.features import build_skeleton_graph
-from maskel.spur_pruning import prune_short_spurs
+from maskel.postprocessing.spur_pruning import prune_short_spurs
 
 
 class TestPruneShortSpurs:

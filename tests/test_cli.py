@@ -14,7 +14,7 @@ from maskel._io import (
     save_skeleton,
     write_csv,
 )
-from maskel.cli import _discover_input_paths
+from maskel.cli.run import discover_input_paths
 from maskel.config import CONFIG_SCHEMA_VERSION, PipelineConfig
 
 HEAVY_MODULES = frozenset(
@@ -24,7 +24,6 @@ HEAVY_MODULES = frozenset(
         "PIL.Image",
         "tifffile",
         "maskel.pipeline",
-        "maskel._batch",
         "maskel._io",
     }
 )
@@ -76,7 +75,7 @@ if heavy:
 class TestDiscoverInputPaths:
     def test_single_png_file(self, tmp_path):
         (tmp_path / "a.png").touch()
-        result = _discover_input_paths([str(tmp_path / "a.png")], recursive=False)
+        result = discover_input_paths([str(tmp_path / "a.png")], recursive=False)
         assert len(result) == 1
         assert result[0].name == "a.png"
 
@@ -84,7 +83,7 @@ class TestDiscoverInputPaths:
         (tmp_path / "a.png").touch()
         (tmp_path / "b.jpg").touch()
         (tmp_path / "c.tif").touch()
-        result = _discover_input_paths(
+        result = discover_input_paths(
             [str(tmp_path / "a.png"), str(tmp_path / "b.jpg"), str(tmp_path / "c.tif")],
             recursive=False,
         )
@@ -94,7 +93,7 @@ class TestDiscoverInputPaths:
         (tmp_path / "a.png").touch()
         (tmp_path / "b.jpg").touch()
         (tmp_path / "not_an_image.txt").touch()
-        result = _discover_input_paths([str(tmp_path)], recursive=False)
+        result = discover_input_paths([str(tmp_path)], recursive=False)
         assert len(result) == 2
 
     def test_directory_recursive(self, tmp_path):
@@ -103,7 +102,7 @@ class TestDiscoverInputPaths:
         (tmp_path / "root.png").touch()
         (sub / "nested.tif").touch()
         (sub / "skip.txt").touch()
-        result = _discover_input_paths([str(tmp_path)], recursive=True)
+        result = discover_input_paths([str(tmp_path)], recursive=True)
         names = {p.name for p in result}
         assert "root.png" in names
         assert "nested.tif" in names
@@ -111,14 +110,14 @@ class TestDiscoverInputPaths:
 
     def test_npy_file_supported(self, tmp_path):
         (tmp_path / "vol.npy").touch()
-        result = _discover_input_paths([str(tmp_path / "vol.npy")], recursive=False)
+        result = discover_input_paths([str(tmp_path / "vol.npy")], recursive=False)
         assert len(result) == 1
 
     def test_glob_pattern(self, tmp_path):
         (tmp_path / "image_01.png").touch()
         (tmp_path / "image_02.png").touch()
         (tmp_path / "other.jpg").touch()
-        result = _discover_input_paths([str(tmp_path / "image_*.png")], recursive=False)
+        result = discover_input_paths([str(tmp_path / "image_*.png")], recursive=False)
         assert len(result) == 2
 
 
@@ -244,7 +243,7 @@ class TestLoadImage:
         path = tmp_path / "vol.tif"
         tifffile.imwrite(path, np.zeros((7, 4, 5), dtype=np.uint8))
         monkeypatch.setattr(
-            "maskel._io.Image.open",
+            "maskel._io.images.Image.open",
             lambda *a, **k: pytest.fail("TIFF must not be read through Pillow"),
         )
         assert load_image(path).shape == (7, 4, 5)
@@ -365,10 +364,10 @@ def _make_args(**kwargs):
 
 class TestMainCommands:
     def test_config_init_creates_valid_json(self, tmp_path):
-        from maskel.cli import _config_init
+        from maskel.cli.config import config_init
 
         args = _make_args(out=str(tmp_path / "config.json"))
-        exit_code = _config_init(args)
+        exit_code = config_init(args)
         assert exit_code == 0
 
         with open(args.out) as f:
@@ -378,7 +377,7 @@ class TestMainCommands:
         assert "output" in data
 
     def test_validate_config_succeeds(self, tmp_path):
-        from maskel.cli import _validate_config
+        from maskel.cli.config import validate_config
 
         config_path = tmp_path / "cfg.json"
         config = PipelineConfig.from_dict(
@@ -387,11 +386,11 @@ class TestMainCommands:
         config_path.write_text(json.dumps(config.to_dict(), indent=2))
 
         args = _make_args(config=str(config_path))
-        exit_code = _validate_config(args)
+        exit_code = validate_config(args)
         assert exit_code == 0
 
     def test_run_batch_processes_single_image(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -416,7 +415,7 @@ class TestMainCommands:
             jobs=1,
         )
 
-        exit_code = _run_batch(args)
+        exit_code = run_batch(args)
         assert exit_code == 0
         assert (out_dir / "cross").is_dir()
         skeleton_path = out_dir / "cross" / "cross_skeleton.npy"
@@ -426,9 +425,9 @@ class TestMainCommands:
         assert (out_dir / "summary.csv").exists()
 
     def test_run_parser_accepts_spacing_flag(self):
-        from maskel.cli import _make_parser
+        from maskel.cli import make_parser
 
-        parser = _make_parser()
+        parser = make_parser()
         args = parser.parse_args(
             [
                 "run",
@@ -446,16 +445,16 @@ class TestMainCommands:
         assert args.spacing == [2.0, 0.5]
 
     def test_run_parser_spacing_defaults_to_none(self):
-        from maskel.cli import _make_parser
+        from maskel.cli import make_parser
 
-        parser = _make_parser()
+        parser = make_parser()
         args = parser.parse_args(
             ["run", "--input", "in", "--config", "config.json", "--out", "out"]
         )
         assert args.spacing is None
 
     def test_run_batch_spacing_flag_overrides_config(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -481,7 +480,7 @@ class TestMainCommands:
             spacing=[2.0, 2.0],
         )
 
-        exit_code = _run_batch(args)
+        exit_code = run_batch(args)
         assert exit_code == 0
         assert (out_dir / "summary.csv").exists()
         with (out_dir / "summary.csv").open(newline="") as f:
@@ -491,7 +490,7 @@ class TestMainCommands:
         assert float(rows[0]["total_length"]) > 0
 
     def test_run_batch_no_input_files_raises(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         config_path = tmp_path / "cfg.json"
         config = PipelineConfig.from_dict(
@@ -509,10 +508,10 @@ class TestMainCommands:
         )
 
         with pytest.raises(ValueError, match="No input files found"):
-            _run_batch(args)
+            run_batch(args)
 
     def test_run_batch_parallel_multiple_images(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -538,7 +537,7 @@ class TestMainCommands:
             jobs=2,
         )
 
-        exit_code = _run_batch(args)
+        exit_code = run_batch(args)
         assert exit_code == 0
         assert (out_dir / "a").is_dir()
         assert (out_dir / "b").is_dir()
@@ -552,7 +551,7 @@ class TestMainCommands:
         assert len(data) == 2
 
     def test_run_batch_parallel_failure_raises(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -579,10 +578,10 @@ class TestMainCommands:
         )
 
         with pytest.raises(RuntimeError, match=r"image\(s\) failed"):
-            _run_batch(args)
+            run_batch(args)
 
     def test_run_batch_jobs_zero_auto_detect(self, tmp_path):
-        from maskel.cli import _run_batch
+        from maskel.cli.run import run_batch
 
         img_path = tmp_path / "input"
         img_path.mkdir()
@@ -607,7 +606,7 @@ class TestMainCommands:
             jobs=0,
         )
 
-        exit_code = _run_batch(args)
+        exit_code = run_batch(args)
         assert exit_code == 0
         assert (out_dir / "cross" / "cross_skeleton.npy").exists()
 
@@ -692,12 +691,12 @@ class TestSkeletonizeTiledCommand:
         return _make_args(**args)
 
     def test_writes_skeleton_manifest_and_done_log(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.tiling import DONE_LOG_NAME
 
         image = _write_cross_h5(tmp_path / "vessels.h5")
 
-        assert _run_skeletonize_tiled(self._args(tmp_path)) == 0
+        assert run_skeletonize_tiled(self._args(tmp_path)) == 0
 
         work = tmp_path / "work"
         skeleton = np.load(work / "vessels_skeleton.npy")
@@ -711,27 +710,27 @@ class TestSkeletonizeTiledCommand:
         assert not (work / "skeletons").exists()
 
     def test_matches_untiled_thinning(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.thin import lee94_thin
 
         image = _write_cross_h5(tmp_path / "vessels.h5")
-        _run_skeletonize_tiled(self._args(tmp_path))
+        run_skeletonize_tiled(self._args(tmp_path))
 
         written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
         assert np.array_equal(written, lee94_thin(image))
 
     def test_contiguous_dataset(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.thin import lee94_thin
 
         image = _write_cross_h5(tmp_path / "vessels.h5", chunks=None, compression=None)
-        _run_skeletonize_tiled(self._args(tmp_path))
+        run_skeletonize_tiled(self._args(tmp_path))
 
         written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
         assert np.array_equal(written, lee94_thin(image))
 
     def test_named_dataset_among_several(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.thin import lee94_thin
 
         path = tmp_path / "vessels.h5"
@@ -739,66 +738,66 @@ class TestSkeletonizeTiledCommand:
         image = _write_cross_h5(path, dataset="seg/mask")
 
         args = self._args(tmp_path, dataset="seg/mask")
-        assert _run_skeletonize_tiled(args) == 0
+        assert run_skeletonize_tiled(args) == 0
         written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
         assert np.array_equal(written, lee94_thin(image))
 
     def test_ambiguous_datasets_need_a_name(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         path = tmp_path / "vessels.h5"
         _write_cross_h5(path, dataset="a")
         _write_cross_h5(path, dataset="b")
 
         with pytest.raises(ValueError, match="--dataset"):
-            _run_skeletonize_tiled(self._args(tmp_path))
+            run_skeletonize_tiled(self._args(tmp_path))
         assert not (tmp_path / "work" / "vessels_skeleton.npy").exists()
 
     def test_missing_dataset_raises(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         _write_cross_h5(tmp_path / "vessels.h5")
 
         with pytest.raises(ValueError, match="no dataset 'nope'"):
-            _run_skeletonize_tiled(self._args(tmp_path, dataset="nope"))
+            run_skeletonize_tiled(self._args(tmp_path, dataset="nope"))
 
     def test_4d_dataset_raises(self, tmp_path):
         import h5py
 
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         with h5py.File(tmp_path / "vessels.h5", "w") as f:
             f.create_dataset("mask", data=np.zeros((2, 4, 4, 4), np.uint8))
 
         with pytest.raises(ValueError, match="2D or 3D"):
-            _run_skeletonize_tiled(self._args(tmp_path, dataset="mask"))
+            run_skeletonize_tiled(self._args(tmp_path, dataset="mask"))
 
     @pytest.mark.parametrize("name", ["vessels.npy", "vessels.tif", "vessels.png"])
     def test_non_hdf5_image_is_rejected(self, tmp_path, name):
         """Formats that cannot be read block by block must not be loaded whole."""
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         path = tmp_path / name
         path.write_bytes(b"")
 
         with pytest.raises(ValueError, match="HDF5"):
-            _run_skeletonize_tiled(self._args(tmp_path, input=str(path)))
+            run_skeletonize_tiled(self._args(tmp_path, input=str(path)))
 
     def test_per_axis_tile_shape(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.tiling import read_manifest
 
         _write_cross_h5(tmp_path / "vessels.h5")
-        _run_skeletonize_tiled(self._args(tmp_path, tile_shape=[16, 24]))
+        run_skeletonize_tiled(self._args(tmp_path, tile_shape=[16, 24]))
 
         assert read_manifest(tmp_path / "work").tile_shape == (16, 24)
 
     def test_halo_defaults_when_omitted(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
         from maskel.tiling import DEFAULT_HALO, read_manifest
 
         _write_cross_h5(tmp_path / "vessels.h5")
-        _run_skeletonize_tiled(self._args(tmp_path, halo=None))
+        run_skeletonize_tiled(self._args(tmp_path, halo=None))
 
         assert read_manifest(tmp_path / "work").halo == DEFAULT_HALO
 
@@ -812,7 +811,7 @@ class TestSkeletonizeTiledCommand:
     )
     def test_processing_config_is_rejected(self, tmp_path, extraction):
         """Steps after the thinning must fail loudly, not silently."""
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
@@ -828,11 +827,11 @@ class TestSkeletonizeTiledCommand:
 
         (name,) = extraction
         with pytest.raises(NotImplementedError, match=name):
-            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
+            run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
 
     def test_preprocessing_config_is_applied(self, tmp_path):
         """Closing and bounded hole filling run per tile."""
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
@@ -850,14 +849,12 @@ class TestSkeletonizeTiledCommand:
             )
         )
 
-        assert (
-            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
-        )
+        assert run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
         assert (tmp_path / "work" / "vessels_skeleton.npy").is_file()
 
     def test_unbounded_fill_holes_is_rejected(self, tmp_path):
         """No halo covers a hole that may span the volume."""
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
@@ -872,11 +869,11 @@ class TestSkeletonizeTiledCommand:
         )
 
         with pytest.raises(ValueError, match="max_hole_size"):
-            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
+            run_skeletonize_tiled(self._args(tmp_path, config=str(config_path)))
 
     def test_feature_config_is_accepted_and_ignored(self, tmp_path):
         """Only the skeleton is produced, so extraction flags are not errors."""
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
@@ -890,30 +887,28 @@ class TestSkeletonizeTiledCommand:
             )
         )
 
-        assert (
-            _run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
-        )
+        assert run_skeletonize_tiled(self._args(tmp_path, config=str(config_path))) == 0
         assert not list((tmp_path / "work").glob("*.csv"))
 
     def test_missing_input_raises(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         with pytest.raises(ValueError, match="not an existing file"):
-            _run_skeletonize_tiled(self._args(tmp_path))
+            run_skeletonize_tiled(self._args(tmp_path))
 
     def test_unsupported_extension_raises(self, tmp_path):
-        from maskel.cli import _run_skeletonize_tiled
+        from maskel.cli.tiled import run_skeletonize_tiled
 
         bad = tmp_path / "vessels.txt"
         bad.write_text("not an image")
 
         with pytest.raises(ValueError, match="Unsupported input"):
-            _run_skeletonize_tiled(self._args(tmp_path, input=str(bad)))
+            run_skeletonize_tiled(self._args(tmp_path, input=str(bad)))
 
     def test_parser_accepts_the_subcommand(self):
-        from maskel.cli import _make_parser
+        from maskel.cli import make_parser
 
-        args = _make_parser().parse_args(
+        args = make_parser().parse_args(
             [
                 "skeletonize_tiled",
                 "--input",

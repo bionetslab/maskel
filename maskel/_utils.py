@@ -1,6 +1,7 @@
 """Internal utility functions shared across the maskel package."""
 
 import numpy as np
+from scipy import ndimage as ndi
 
 
 def to_binary(arr: np.ndarray, *, inplace: bool = False) -> np.ndarray:
@@ -35,3 +36,26 @@ def to_binary(arr: np.ndarray, *, inplace: bool = False) -> np.ndarray:
     # holding exactly 0/1 - viewing it as uint8 is free. Going through
     # `.astype(np.uint8)` instead would allocate a second full-size buffer.
     return np.greater(arr, 0).view(np.uint8)
+
+
+def _label_compact(mask: np.ndarray, dtype: type = np.int16) -> tuple[np.ndarray, int]:
+    """``scipy.ndimage.label`` with the smallest label dtype that fits.
+
+    ``ndi.label`` defaults to a 32-bit label array, which for a large
+    volume is easily the single biggest allocation in
+    ``preprocess_binary``'s hole-filling path - well beyond what any of
+    the thinning methods downstream actually need. Enclosed-hole counts
+    are almost always small, so try *dtype* (16-bit by default) first and
+    only fall back to scipy's own default if there turn out to be more
+    distinct holes than it can represent. scipy raises ``RuntimeError``
+    rather than silently overflowing when a label id doesn't fit, so this
+    can never mislabel anything - only cost a re-run in that rare case.
+
+    *dtype* is a parameter (rather than hardcoded) so tests can force the
+    fallback path with a small, fast array instead of needing tens of
+    thousands of connected components to overflow the real 16-bit default.
+    """
+    try:
+        return ndi.label(mask, output=dtype)
+    except RuntimeError:
+        return ndi.label(mask)

@@ -1,4 +1,4 @@
-"""Tests for maskel.graphml GraphML and pickled-networkx export."""
+"""Tests for maskel._io.graphml GraphML and pickled-networkx export."""
 
 import pickle
 import xml.etree.ElementTree as ET
@@ -7,7 +7,11 @@ import networkx as nx
 import numpy as np
 from skan import Skeleton
 
-from maskel.graphml import build_networkx_graph, write_graphml, write_networkx_pickle
+from maskel._io.graphml import (
+    build_networkx_graph,
+    write_graphml,
+    write_networkx_pickle,
+)
 
 
 def _junction_endpoint_count(graph: Skeleton) -> int:

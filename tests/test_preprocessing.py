@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 from scipy import ndimage as ndi
 
+from maskel._utils import _label_compact
 from maskel.config import ExtractionConfig, OutputConfig, PipelineConfig
-from maskel.pipeline import _label_compact, analyze_segmentation_mask, preprocess_binary
+from maskel.pipeline import analyze_segmentation_mask
+from maskel.preprocessing import preprocess_binary
 
 
 class TestClosing:
@@ -395,7 +397,7 @@ class TestPreprocessBinaryNoOp:
 
 class TestLabelCompact:
     """`_label_compact` tries a smaller label dtype before falling back to
-    scipy's default - see its docstring in maskel/pipeline.py for why.
+    scipy's default - see its docstring in maskel/_utils.py for why.
     """
 
     def test_matches_default_label_dtype(self):
