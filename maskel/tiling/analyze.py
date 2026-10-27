@@ -42,8 +42,10 @@ def analyze_tiled(
     halo: int = DEFAULT_HALO,
     progress: str | bool = "off",
     resume: bool = True,
+    dataset: str | None = None,
 ) -> None:
-    """Thin *source* into ``work_dir/<base_name>_skeleton.npy``.
+    """Thin *source* (an HDF5 file or an array) into
+    ``work_dir/<base_name>_skeleton.npy``.
 
     Opening, closing and bounded hole filling run per block; nothing after the thinning
     does - no junction cleanup, spur pruning, radii, graph or features.
@@ -68,4 +70,5 @@ def analyze_tiled(
         progress=progress,
         out_path=Path(work_dir) / f"{base_name}_skeleton.npy",
         resume=resume,
+        dataset=dataset,
     )

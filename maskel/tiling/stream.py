@@ -98,10 +98,12 @@ def skeletonize_streaming(
     progress: str | bool = "off",
     out_path: Path | None = None,
     resume: bool = True,
+    dataset: str | None = None,
 ) -> Path:
     """Thin *source* tile by tile and return the path of the skeleton ``.npy``.
 
-    *source* is an image path (streamed) or an array. *halo* is what the
+    *source* is an HDF5 file (streamed; *dataset* names the dataset inside
+    it, see `BlockReader`) or an array. *halo* is what the
     thinning needs; *preprocess* adds its own margin on top. *work_dir*
     receives ``manifest.json`` and ``done.jsonl``. With *resume*, tiles already
     in the done log are skipped.
@@ -111,7 +113,22 @@ def skeletonize_streaming(
     out_path = Path(out_path) if out_path is not None else work_dir / SKELETON_NAME
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    reader = BlockReader(source)
+    with BlockReader(source, dataset) as reader:
+        return _skeletonize(
+            reader, work_dir, out_path, tile_shape, halo, preprocess, progress, resume
+        )
+
+
+def _skeletonize(
+    reader: BlockReader,
+    work_dir: Path,
+    out_path: Path,
+    tile_shape: int | tuple[int, ...],
+    halo: int,
+    preprocess: BlockPreprocess | None,
+    progress: str | bool,
+    resume: bool,
+) -> Path:
     margin = preprocess.margin if preprocess else 0
     grid = TileGrid(shape=reader.shape, tile_shape=tile_shape, halo=halo + margin)
 

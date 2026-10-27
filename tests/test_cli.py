@@ -661,12 +661,18 @@ class TestMainCommands:
         assert exit_code == 0
 
 
-def _write_cross_npy(path, size=48):
+def _write_cross_h5(path, size=48, dataset="mask", **create_kwargs):
+    """A cross, stored chunked and compressed so blocks span several chunks."""
+    import h5py
+
     image = np.zeros((size, size), dtype=np.uint8)
-    image[size // 2 - 2 : size // 2 + 2, :] = 1
-    image[:, size // 2 - 2 : size // 2 + 2] = 1
-    np.save(path, image)
-    return image
+    image[size // 2 - 2 : size // 2 + 2, :] = 255
+    image[:, size // 2 - 2 : size // 2 + 2] = 255
+    kwargs = {"chunks": (10, 10), "compression": "gzip"}
+    kwargs.update(create_kwargs)
+    with h5py.File(path, "a") as f:
+        f.create_dataset(dataset, data=image, **kwargs)
+    return (image > 0).astype(np.uint8)
 
 
 class TestSkeletonizeTiledCommand:
@@ -674,8 +680,9 @@ class TestSkeletonizeTiledCommand:
 
     def _args(self, tmp_path, **overrides):
         args = {
-            "input": str(tmp_path / "vessels.npy"),
+            "input": str(tmp_path / "vessels.h5"),
             "out": str(tmp_path / "work"),
+            "dataset": None,
             "tile_shape": [16],
             "halo": 4,
             "config": None,
@@ -688,7 +695,7 @@ class TestSkeletonizeTiledCommand:
         from maskel.cli import _run_skeletonize_tiled
         from maskel.tiling import DONE_LOG_NAME
 
-        image = _write_cross_npy(tmp_path / "vessels.npy")
+        image = _write_cross_h5(tmp_path / "vessels.h5")
 
         assert _run_skeletonize_tiled(self._args(tmp_path)) == 0
 
@@ -707,30 +714,81 @@ class TestSkeletonizeTiledCommand:
         from maskel.cli import _run_skeletonize_tiled
         from maskel.thin import lee94_thin
 
-        image = _write_cross_npy(tmp_path / "vessels.npy")
+        image = _write_cross_h5(tmp_path / "vessels.h5")
         _run_skeletonize_tiled(self._args(tmp_path))
 
         written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
         assert np.array_equal(written, lee94_thin(image))
 
-    def test_read_only_input_from_an_image_reader(self, tmp_path):
-        """PIL/tifffile can hand back read-only arrays; in-place must yield."""
+    def test_contiguous_dataset(self, tmp_path):
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.thin import lee94_thin
+
+        image = _write_cross_h5(tmp_path / "vessels.h5", chunks=None, compression=None)
+        _run_skeletonize_tiled(self._args(tmp_path))
+
+        written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
+        assert np.array_equal(written, lee94_thin(image))
+
+    def test_named_dataset_among_several(self, tmp_path):
+        from maskel.cli import _run_skeletonize_tiled
+        from maskel.thin import lee94_thin
+
+        path = tmp_path / "vessels.h5"
+        _write_cross_h5(path, size=40, dataset="raw/other")
+        image = _write_cross_h5(path, dataset="seg/mask")
+
+        args = self._args(tmp_path, dataset="seg/mask")
+        assert _run_skeletonize_tiled(args) == 0
+        written = np.load(tmp_path / "work" / "vessels_skeleton.npy")
+        assert np.array_equal(written, lee94_thin(image))
+
+    def test_ambiguous_datasets_need_a_name(self, tmp_path):
         from maskel.cli import _run_skeletonize_tiled
 
-        image = np.zeros((48, 48), dtype=np.uint8)
-        image[22:26, :] = 255
-        image[:, 22:26] = 255
-        Image.fromarray(image).save(tmp_path / "vessels.png")
+        path = tmp_path / "vessels.h5"
+        _write_cross_h5(path, dataset="a")
+        _write_cross_h5(path, dataset="b")
 
-        args = self._args(tmp_path, input=str(tmp_path / "vessels.png"))
-        assert _run_skeletonize_tiled(args) == 0
-        assert np.count_nonzero(np.load(tmp_path / "work" / "vessels_skeleton.npy")) > 0
+        with pytest.raises(ValueError, match="--dataset"):
+            _run_skeletonize_tiled(self._args(tmp_path))
+        assert not (tmp_path / "work" / "vessels_skeleton.npy").exists()
+
+    def test_missing_dataset_raises(self, tmp_path):
+        from maskel.cli import _run_skeletonize_tiled
+
+        _write_cross_h5(tmp_path / "vessels.h5")
+
+        with pytest.raises(ValueError, match="no dataset 'nope'"):
+            _run_skeletonize_tiled(self._args(tmp_path, dataset="nope"))
+
+    def test_4d_dataset_raises(self, tmp_path):
+        import h5py
+
+        from maskel.cli import _run_skeletonize_tiled
+
+        with h5py.File(tmp_path / "vessels.h5", "w") as f:
+            f.create_dataset("mask", data=np.zeros((2, 4, 4, 4), np.uint8))
+
+        with pytest.raises(ValueError, match="2D or 3D"):
+            _run_skeletonize_tiled(self._args(tmp_path, dataset="mask"))
+
+    @pytest.mark.parametrize("name", ["vessels.npy", "vessels.tif", "vessels.png"])
+    def test_non_hdf5_image_is_rejected(self, tmp_path, name):
+        """Formats that cannot be read block by block must not be loaded whole."""
+        from maskel.cli import _run_skeletonize_tiled
+
+        path = tmp_path / name
+        path.write_bytes(b"")
+
+        with pytest.raises(ValueError, match="HDF5"):
+            _run_skeletonize_tiled(self._args(tmp_path, input=str(path)))
 
     def test_per_axis_tile_shape(self, tmp_path):
         from maskel.cli import _run_skeletonize_tiled
         from maskel.tiling import read_manifest
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         _run_skeletonize_tiled(self._args(tmp_path, tile_shape=[16, 24]))
 
         assert read_manifest(tmp_path / "work").tile_shape == (16, 24)
@@ -739,7 +797,7 @@ class TestSkeletonizeTiledCommand:
         from maskel.cli import _run_skeletonize_tiled
         from maskel.tiling import DEFAULT_HALO, read_manifest
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         _run_skeletonize_tiled(self._args(tmp_path, halo=None))
 
         assert read_manifest(tmp_path / "work").halo == DEFAULT_HALO
@@ -756,7 +814,7 @@ class TestSkeletonizeTiledCommand:
         """Steps after the thinning must fail loudly, not silently."""
         from maskel.cli import _run_skeletonize_tiled
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
         config_path.write_text(
             json.dumps(
@@ -776,7 +834,7 @@ class TestSkeletonizeTiledCommand:
         """Closing and bounded hole filling run per tile."""
         from maskel.cli import _run_skeletonize_tiled
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
         config_path.write_text(
             json.dumps(
@@ -801,7 +859,7 @@ class TestSkeletonizeTiledCommand:
         """No halo covers a hole that may span the volume."""
         from maskel.cli import _run_skeletonize_tiled
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
         config_path.write_text(
             json.dumps(
@@ -820,7 +878,7 @@ class TestSkeletonizeTiledCommand:
         """Only the skeleton is produced, so extraction flags are not errors."""
         from maskel.cli import _run_skeletonize_tiled
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         config_path = tmp_path / "cfg.json"
         config_path.write_text(
             json.dumps(
@@ -859,7 +917,7 @@ class TestSkeletonizeTiledCommand:
             [
                 "skeletonize_tiled",
                 "--input",
-                "vol.npy",
+                "vol.h5",
                 "--out",
                 "work",
                 "--tile-shape",
@@ -880,7 +938,7 @@ class TestSkeletonizeTiledCommand:
 
         from maskel.cli import main
 
-        _write_cross_npy(tmp_path / "vessels.npy")
+        _write_cross_h5(tmp_path / "vessels.h5")
         monkeypatch.setattr(
             sys,
             "argv",
@@ -888,7 +946,7 @@ class TestSkeletonizeTiledCommand:
                 "maskel",
                 "skeletonize_tiled",
                 "--input",
-                str(tmp_path / "vessels.npy"),
+                str(tmp_path / "vessels.h5"),
                 "--out",
                 str(tmp_path / "work"),
                 "--tile-shape",

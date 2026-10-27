@@ -87,8 +87,16 @@ def _make_parser() -> argparse.ArgumentParser:
     skel_parser.add_argument(
         "--input",
         required=True,
-        help="Single input image. Not a batch command: tiling targets one "
-        "image that does not fit in memory.",
+        help="Single HDF5 file (.h5/.hdf5). Not a batch command: tiling "
+        "targets one image that does not fit in memory, and HDF5 can be read "
+        "block by block, compressed or not.",
+    )
+    skel_parser.add_argument(
+        "--dataset",
+        default=None,
+        help="Path of the image dataset inside the HDF5 file, e.g. "
+        "'/volume/mask'. Optional when the file holds exactly one 2D or 3D "
+        "dataset.",
     )
     skel_parser.add_argument(
         "--out",
@@ -348,14 +356,16 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
         analyze_tiled,
         preprocess_from_config,
     )
+    from maskel.tiling.reader import HDF5_EXTENSIONS
 
     in_path = Path(args.input)
     if not in_path.is_file():
         raise ValueError(f"Input '{in_path}' is not an existing file.")
-    if in_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+    if in_path.suffix.lower() not in HDF5_EXTENSIONS:
         raise ValueError(
-            f"Unsupported input '{in_path.name}'. Expected one of: "
-            f"{', '.join(sorted(_SUPPORTED_EXTENSIONS))}."
+            f"Unsupported input '{in_path.name}'. skeletonize_tiled reads "
+            f"HDF5 only ({', '.join(sorted(HDF5_EXTENSIONS))}); convert the "
+            f"image to HDF5 first."
         )
     config = (
         load_pipeline_config(Path(args.config))
@@ -373,7 +383,10 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
 
     # Only the header is read here - the volume itself is streamed tile by
     # tile, so nothing proportional to its size is ever resident.
-    shape = BlockReader(in_path).shape
+    # Opening it here also validates the dataset and its compression filter
+    # before anything is written.
+    with BlockReader(in_path, args.dataset) as reader:
+        shape = reader.shape
 
     # Report the geometry up front: the redundant-work factor is the number
     # people get wrong, and a bad one costs hours on a large volume. The grid
@@ -401,6 +414,7 @@ def _run_skeletonize_tiled(args: argparse.Namespace) -> int:
         tile_shape=tile_shape,
         halo=halo,
         progress=args.progress,
+        dataset=args.dataset,
     )
 
     print(f"Wrote '{out_dir / f'{in_path.stem}_skeleton.npy'}'.")
