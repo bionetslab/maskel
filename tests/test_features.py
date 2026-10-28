@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 from skan import Skeleton, summarize
 
@@ -11,7 +12,10 @@ from maskel.features import (
     extract_summary_features,
     fractal_dimension,
     per_segment_radii,
+    skeleton_graph_from_coordinates,
+    skeleton_image_from_graph,
 )
+from maskel.thin import lee94_thin
 
 
 class TestComputeTortuosity:
@@ -199,6 +203,54 @@ class TestBuildSkeletonGraph:
         graph_unit = build_skeleton_graph(img)
         graph_scaled = build_skeleton_graph(img, spacing=(3.0, 3.0))
         np.testing.assert_array_equal(graph_unit.coordinates, graph_scaled.coordinates)
+
+
+class TestSkeletonGraphFromCoordinates:
+    @staticmethod
+    def _random_skeleton(shape, seed):
+        from scipy import ndimage as ndi
+
+        rng = np.random.default_rng(seed)
+        blobs = ndi.gaussian_filter(rng.random(shape), 2) > 0.5
+        return lee94_thin(blobs.astype(np.uint8))
+
+    @pytest.mark.parametrize(
+        ("shape", "spacing"),
+        [
+            ((64, 64), None),
+            ((64, 64), (2.0, 0.5)),
+            ((32, 40, 48), None),
+            ((32, 40, 48), (1.0, 1.0, 1.0)),
+            ((32, 40, 48), (3.0, 0.43, 0.43)),
+        ],
+    )
+    def test_matches_graph_built_from_image(self, shape, spacing):
+        skeleton = self._random_skeleton(shape, seed=len(shape))
+        coords = np.argwhere(skeleton)
+        np.random.default_rng(0).shuffle(coords)  # input order must not matter
+
+        expected = build_skeleton_graph(skeleton, spacing=spacing)
+        graph = skeleton_graph_from_coordinates(coords, shape, spacing=spacing)
+
+        np.testing.assert_array_equal(graph.coordinates, expected.coordinates)
+        np.testing.assert_array_equal(graph.degrees, expected.degrees)
+        assert tuple(graph.skeleton_shape) == tuple(expected.skeleton_shape)
+        pd.testing.assert_frame_equal(
+            summarize(graph, separator="-"),
+            summarize(expected, separator="-"),
+            check_exact=True,
+        )
+
+    def test_no_adjacent_pixels_returns_none(self):
+        coords = np.array([[1, 1], [1, 5], [6, 3]])
+        assert skeleton_graph_from_coordinates(coords, (8, 8)) is None
+        assert skeleton_graph_from_coordinates(coords[:1], (8, 8)) is None
+        assert skeleton_graph_from_coordinates(coords[:0], (8, 8)) is None
+
+    def test_image_round_trip(self):
+        skeleton = self._random_skeleton((32, 40, 48), seed=1)
+        graph = skeleton_graph_from_coordinates(np.argwhere(skeleton), skeleton.shape)
+        np.testing.assert_array_equal(skeleton_image_from_graph(graph), skeleton > 0)
 
 
 class TestExtractSummaryFeatures:

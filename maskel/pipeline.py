@@ -21,6 +21,7 @@ from maskel.features import (
     extract_node_features,
     extract_summary_features,
     per_segment_radii,
+    skeleton_image_from_graph,
 )
 from maskel.postprocessing import collapse_triangle_junctions, prune_short_spurs
 from maskel.preprocessing import (
@@ -130,9 +131,7 @@ def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
     """True when no two foreground pixels in *skeleton* are adjacent (full
     connectivity), i.e. every "branch" is an isolated single pixel.
 
-    ``skan.Skeleton`` (via ``build_skeleton_graph``, and via
-    ``collapse_triangle_junctions``'s own call during junction cleanup)
-    requires at least one graph edge to build its sparse path matrix and
+    ``skan.Skeleton`` (via ``build_skeleton_graph``) requires at least one graph edge to build its sparse path matrix and
     raises a low-level ``ValueError`` from inside scipy.sparse otherwise -
     this is checked for up front so a degenerate but perfectly valid input
     (e.g. a single-pixel object, or a mask whose thinned skeleton happens to
@@ -276,26 +275,30 @@ def _analyze_single_object(
     if config.extraction.junction_cleanup or config.extraction.mask_radius:
         edt = ndi.distance_transform_edt(binary, sampling=spacing)
 
+    # -- build graph & branch data on the thinned skeleton ---------------
+    graph = build_skeleton_graph(skeleton, spacing=spacing)
+
     # -- optional: collapse triangle junction artifacts -----------------
-    # (requires EDT; done on the original skeleton before graph building)
+    # (requires EDT; works on the graph and returns a rebuilt graph, from
+    # which the skeleton image is redrawn for the image-based steps below)
     if config.extraction.junction_cleanup:
         rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing, edt=edt)
-        skeleton = collapse_triangle_junctions(
-            skeleton,
+        cleaned = collapse_triangle_junctions(
+            graph,
             radius_matrix=rm_temp,
             threshold_factor=config.extraction.cleanup_threshold_factor,
         )
-        if _skeleton_has_no_branches(skeleton):
+        if cleaned is None:
             return _ObjectResult(
-                skeleton=skeleton,
+                skeleton=np.zeros_like(skeleton),
                 summary_features={},
                 branch_records=[],
                 node_records=[],
                 preprocessed_binary=preprocessed_binary,
             )
-
-    # -- build graph & branch data on the (potentially cleaned) skeleton -
-    graph = build_skeleton_graph(skeleton, spacing=spacing)
+        if cleaned is not graph:
+            graph = cleaned
+            skeleton = skeleton_image_from_graph(graph)
 
     # -- optional: prune short spur branches -----------------------------
     # (a spur: one node is an endpoint (degree 1), the other a junction

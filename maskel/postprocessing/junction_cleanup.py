@@ -4,9 +4,9 @@ from typing import Any
 import networkx as nx
 import numpy as np
 from skan import summarize
-from skan.csr import Skeleton, nx_to_skeleton, skeleton_to_nx
+from skan.csr import Skeleton, skeleton_to_nx
 
-from maskel._utils import to_binary
+from maskel.features.graph import skeleton_graph_from_coordinates
 
 
 def _bresenham_line(
@@ -29,17 +29,17 @@ def _bresenham_line(
 
 
 def collapse_triangle_junctions(
-    skeleton: np.ndarray,
+    graph: Skeleton,
     radius_matrix: np.ndarray | None = None,
     threshold_factor: float = 2.5,
-) -> np.ndarray:
+) -> Skeleton | None:
     """Collapse small cycles (triangle/diamond junction artifacts) in a
-    skeleton into single centroid pixels.
+    skeleton graph into single centroid pixels.
 
     Parameters
     ----------
-    skeleton : ndarray
-        Binary skeleton array (``uint8`` or ``bool``).
+    graph : Skeleton
+        skan Skeleton graph (e.g. from `build_skeleton_graph`).
     radius_matrix : ndarray, optional
         EDT radius array from `compute_radii`. When supplied, the
         local diameter is estimated from the radii at the cycle node
@@ -51,22 +51,21 @@ def collapse_triangle_junctions(
 
     Returns
     -------
-    cleaned : ndarray
-        Binary skeleton of the same shape with collapsed junction cycles.
+    cleaned : Skeleton or None
+        *graph* itself when there is nothing to collapse, otherwise a graph
+        rebuilt (with *graph*'s spacing) from the pixels left after
+        collapsing. ``None`` when no two of those pixels are adjacent
+        anymore, i.e. nothing is left to build a graph from.
     """
 
-    if not skeleton.any():
-        return skeleton.copy().astype(np.uint8)
+    shape = tuple(graph.skeleton_shape)
 
-    shape = skeleton.shape
-
-    # 1. build junction graph via skan
-    skel_obj = Skeleton(to_binary(skeleton))
-    summary = summarize(skel_obj, separator="-")
+    # 1. junction graph: nodes are junctions/endpoints, edges the paths
+    summary = summarize(graph, separator="-")
     if summary.empty:
-        return skeleton.copy().astype(np.uint8)
+        return graph
 
-    G = skeleton_to_nx(skel_obj, summary)
+    G = skeleton_to_nx(graph, summary)
 
     # 2. node -> pixel coordinate lookup from edge paths
     # each edge stores its full pixel path (numpy array of coordinates)
@@ -94,10 +93,10 @@ def collapse_triangle_junctions(
             "skipping cleanup for this object.",
             stacklevel=2,
         )
-        return skeleton.copy().astype(np.uint8)
+        return graph
 
     if not cycles:
-        return skeleton.copy().astype(np.uint8)
+        return graph
 
     # 4. perimeter & local diameter per cycle
     # for each cycle we compute:
@@ -150,7 +149,7 @@ def collapse_triangle_junctions(
     small_mask = np.array(perimeters) < threshold_factor * np.array(diameters)
     small_cycles = [cycles[i] for i in range(len(cycles)) if small_mask[i]]
     if not small_cycles:
-        return skeleton.copy().astype(np.uint8)
+        return graph
 
     # 6. group overlapping cycles (share nodes)
     # adjacent cycles (e.g. two triangles sharing a pixel) must be
@@ -301,19 +300,15 @@ def collapse_triangle_junctions(
             if len(full_path) == 0:
                 continue
 
-            # skan expects edge data atrributes:
-            #   - "values": indicator (1 = skeleton pixel, 0 = not)
-            #   - "indices": flat array indices into the image array.
-            new_values = np.ones(len(full_path), dtype=data["values"].dtype)
-            new_indices = np.ravel_multi_index(full_path.T, shape)
+            G.add_edge(ext_node, cid, path=full_path)
 
-            G.add_edge(
-                ext_node, cid, path=full_path, indices=new_indices, values=new_values
-            )
-
-    # 8. convert graph back to skeleton image
+    # 8. rebuild the skeleton graph from the pixels of the remaining paths
+    # (the pixels an image drawn from the paths would have, so this gives
+    # the same graph as rasterising them and building it from that image)
     if G.number_of_edges() == 0:
-        return np.zeros(shape, dtype=np.uint8)
+        return None
 
-    cleaned_skel = nx_to_skeleton(G)
-    return cleaned_skel.skeleton_image.astype(np.uint8)
+    pixels = np.unique(
+        np.concatenate([path for _, _, path in G.edges.data("path")]), axis=0
+    )
+    return skeleton_graph_from_coordinates(pixels, shape, spacing=graph.spacing)
