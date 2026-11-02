@@ -8,7 +8,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 6
+CONFIG_SCHEMA_VERSION = 7
 
 COLORABLE_BRANCH_PROPERTIES = [
     "object_id",
@@ -47,7 +47,6 @@ def _warn_unknown_keys(known: set[str], data: dict[str, Any]) -> None:
 _OUTPUT_REQUIRES_EXTRACTION = {
     "write_branch_csv": "branches",
     "write_node_csv": "nodes",
-    "write_radius": "mask_radius",
 }
 
 
@@ -82,7 +81,7 @@ class ExtractionConfig:
     opening_radius: int = 0
     closing_iterations: int = 0
     fill_holes: bool = False
-    max_hole_size: int = 0
+    max_hole_diameter: float = 0.0
     show_preprocessed: bool = False
     spacing: tuple[float, ...] | None = None
 
@@ -103,7 +102,7 @@ class ExtractionConfig:
             "opening_radius": self.opening_radius,
             "closing_iterations": self.closing_iterations,
             "fill_holes": self.fill_holes,
-            "max_hole_size": self.max_hole_size,
+            "max_hole_diameter": self.max_hole_diameter,
             "show_preprocessed": self.show_preprocessed,
             "spacing": list(self.spacing) if self.spacing is not None else None,
         }
@@ -121,23 +120,17 @@ class ExtractionConfig:
 class OutputConfig:
     """Output controls for batch CLI runs."""
 
-    write_skeleton_npy: bool = True
-    write_skeleton_png: bool = False
     write_summary_csv: bool = True
     write_branch_csv: bool = False
     write_node_csv: bool = False
-    write_radius: bool = False
     write_graphml: bool = False
     write_networkx_graph: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "write_skeleton_npy": self.write_skeleton_npy,
-            "write_skeleton_png": self.write_skeleton_png,
             "write_summary_csv": self.write_summary_csv,
             "write_branch_csv": self.write_branch_csv,
             "write_node_csv": self.write_node_csv,
-            "write_radius": self.write_radius,
             "write_graphml": self.write_graphml,
             "write_networkx_graph": self.write_networkx_graph,
         }

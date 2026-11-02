@@ -1,4 +1,4 @@
-"""Tests for maskel._io.graphml GraphML and pickled-networkx export."""
+"""Tests for maskel.io.graphml GraphML and pickled-networkx export."""
 
 import pickle
 import xml.etree.ElementTree as ET
@@ -7,7 +7,7 @@ import networkx as nx
 import numpy as np
 from skan import Skeleton
 
-from maskel._io.graphml import (
+from maskel.io.graphml import (
     build_networkx_graph,
     write_graphml,
     write_networkx_pickle,
@@ -41,20 +41,17 @@ class TestBuildNetworkxGraph:
         endpoints = [data for _, data in G.nodes(data=True) if data["is_endpoint"]]
         assert len(endpoints) >= 2
 
-    def test_node_radius_absent_without_radius_matrix(self, cross_graph):
+    def test_node_radius_absent_without_radius(self, cross_graph):
         graph, branch_data = cross_graph
         G = build_networkx_graph(graph, branch_data)
         assert all("radius" not in data for _, data in G.nodes(data=True))
 
-    def test_node_radius_sampled_when_provided(self, cross_graph, cross_skel):
+    def test_node_radius_taken_by_node_id(self, cross_graph):
         graph, branch_data = cross_graph
-        radius_matrix = np.full(cross_skel.shape, 2.5, dtype=np.float64)
-        G = build_networkx_graph(graph, branch_data, radius_matrix=radius_matrix)
+        radius = np.arange(len(graph.coordinates), dtype=np.float64)
+        G = build_networkx_graph(graph, branch_data, radius=radius)
         for node_id, data in G.nodes(data=True):
-            assert data["radius"] == 2.5
-            assert data["radius"] == float(
-                radius_matrix[tuple(graph.coordinates[node_id])]
-            )
+            assert data["radius"] == radius[node_id]
 
     def test_edge_attributes_and_exclusions(self, cross_graph):
         graph, branch_data = cross_graph
@@ -136,16 +133,16 @@ class TestBuildNetworkxGraph:
 
 
 class TestWriteGraphml:
-    def test_write_and_read_round_trip(self, tmp_path, cross_graph, cross_skel):
+    def test_write_and_read_round_trip(self, tmp_path, cross_graph):
         graph, branch_data = cross_graph
-        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        radius = np.full(len(graph.coordinates), 3.0)
         path = tmp_path / "img_graph.graphml"
         write_graphml(
             graph,
             branch_data,
             path,
             summary_features={"total_length": 42.0},
-            radius_matrix=radius_matrix,
+            radius=radius,
         )
 
         G = nx.read_graphml(str(path), node_type=int)
@@ -204,14 +201,14 @@ class TestWriteGraphml:
             assert float(geom.get("y")) == row
             assert float(geom.get("x")) == col
 
-    def test_no_long_attribute_types(self, tmp_path, cross_graph, cross_skel):
+    def test_no_long_attribute_types(self, tmp_path, cross_graph):
         """yEd fails to import GraphML attributes typed ``long``; plain Python
         ints must be written as ``int`` instead (networkx's default for
         numpy int32/64, but ``long`` for plain Python ``int``)."""
         graph, branch_data = cross_graph
-        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        radius = np.full(len(graph.coordinates), 3.0)
         path = tmp_path / "img_graph.graphml"
-        write_graphml(graph, branch_data, path, radius_matrix=radius_matrix)
+        write_graphml(graph, branch_data, path, radius=radius)
 
         tree = ET.parse(path)
         ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
@@ -272,16 +269,16 @@ class TestWriteGraphml:
 
 
 class TestWriteNetworkxPickle:
-    def test_write_and_read_round_trip(self, tmp_path, cross_graph, cross_skel):
+    def test_write_and_read_round_trip(self, tmp_path, cross_graph):
         graph, branch_data = cross_graph
-        radius_matrix = np.full(cross_skel.shape, 3.0, dtype=np.float64)
+        radius = np.full(len(graph.coordinates), 3.0)
         path = tmp_path / "img_graph.pkl"
         write_networkx_pickle(
             graph,
             branch_data,
             path,
             summary_features={"total_length": 42.0},
-            radius_matrix=radius_matrix,
+            radius=radius,
         )
 
         with open(path, "rb") as f:

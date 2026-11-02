@@ -71,14 +71,14 @@ def build_networkx_graph(
     graph: Skeleton,
     branch_data,
     summary_features: dict[str, float] | None = None,
-    radius_matrix: np.ndarray | None = None,
+    radius: np.ndarray | None = None,
     *,
     graphml_safe: bool = True,
 ) -> nx.MultiGraph:
     """Convert a skan skeleton graph into a networkx MultiGraph.
 
     Nodes carry coordinates, degree, node-type flags, and ``radius`` (when
-    *radius_matrix* is provided). Edges carry the per-branch features from
+    *radius* is provided). Edges carry the per-branch features from
     *branch_data*. *summary_features* is attached as graph-level attributes.
 
     Parameters
@@ -89,9 +89,9 @@ def build_networkx_graph(
         Pre-computed branch summary (e.g. from ``skan.summarize``).
     summary_features : dict[str, float], optional
         Per-image summary features attached as graph-level attributes.
-    radius_matrix : ndarray, optional
-        EDT radius array from ``compute_radii``; radius at each node is
-        attached as a ``radius`` node attribute when provided.
+    radius : ndarray, optional
+        Radius of every graph voxel (indexed like ``graph.coordinates``),
+        attached to each node as a ``radius`` attribute when provided.
     graphml_safe : bool
         When True (the default, used for ``write_graphml``), NaN/Inf
         attributes are omitted and plain Python ints are coerced to a
@@ -123,8 +123,8 @@ def build_networkx_graph(
         attrs["is_endpoint"] = degree == 1
         attrs["is_junction"] = degree >= 3
         attrs["is_pass_through"] = degree == 2
-        if radius_matrix is not None:
-            attrs["radius"] = float(radius_matrix[tuple(coords)])
+        if radius is not None:
+            attrs["radius"] = float(radius[node_id])
         G.nodes[node_id].update(attrs)
 
     G.clear_edges()
@@ -238,7 +238,7 @@ def write_graphml(
     path: str | Path,
     *,
     summary_features: dict[str, float] | None = None,
-    radius_matrix: np.ndarray | None = None,
+    radius: np.ndarray | None = None,
 ) -> None:
     """Write a skeleton graph to a GraphML file.
 
@@ -252,15 +252,15 @@ def write_graphml(
         Destination file path.
     summary_features : dict[str, float], optional
         Per-image summary features attached as graph-level attributes.
-    radius_matrix : ndarray, optional
-        EDT radius array from ``compute_radii``; radius at each node is
-        attached as a ``radius`` node attribute when provided.
+    radius : ndarray, optional
+        Radius of every graph voxel (indexed like ``graph.coordinates``),
+        attached to each node as a ``radius`` attribute when provided.
     """
     G = build_networkx_graph(
         graph,
         branch_data,
         summary_features=summary_features,
-        radius_matrix=radius_matrix,
+        radius=radius,
     )
     nx.write_graphml(G, str(path))
     if G.number_of_nodes() > 0:
@@ -273,7 +273,7 @@ def write_networkx_pickle(
     path: str | Path,
     *,
     summary_features: dict[str, float] | None = None,
-    radius_matrix: np.ndarray | None = None,
+    radius: np.ndarray | None = None,
 ) -> None:
     """Write a skeleton graph as a pickled networkx MultiGraph.
 
@@ -295,15 +295,15 @@ def write_networkx_pickle(
         Destination file path.
     summary_features : dict[str, float], optional
         Per-image summary features attached as graph-level attributes.
-    radius_matrix : ndarray, optional
-        EDT radius array from ``compute_radii``; radius at each node is
-        attached as a ``radius`` node attribute when provided.
+    radius : ndarray, optional
+        Radius of every graph voxel (indexed like ``graph.coordinates``),
+        attached to each node as a ``radius`` attribute when provided.
     """
     G = build_networkx_graph(
         graph,
         branch_data,
         summary_features=summary_features,
-        radius_matrix=radius_matrix,
+        radius=radius,
         graphml_safe=False,
     )
     with open(path, "wb") as f:

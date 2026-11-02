@@ -1,10 +1,9 @@
-"""Standalone CLI for Maskel batch analysis.
+"""Standalone CLI for Maskel.
 
 Each subcommand lives in its own module, which registers its arguments via
 ``add_parser`` and its handler via ``set_defaults(handler=...)``:
 
-- `maskel.cli.run` - ``run``
-- `maskel.cli.tiled` - ``skeletonize_tiled``
+- `maskel.cli.run` - ``run``, ``skeletonize``, ``postprocess``, ``features``
 - `maskel.cli.config` - ``init``, ``validate``
 """
 
@@ -15,7 +14,7 @@ import os
 import sys
 from importlib.metadata import version
 
-from maskel.cli import config, run, tiled
+from maskel.cli import config, run
 
 
 def _completions(args: argparse.Namespace) -> int:
@@ -28,7 +27,7 @@ def _completions(args: argparse.Namespace) -> int:
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maskel",
-        description="Maskel CLI for batch mask analysis.",
+        description="Maskel CLI for mask analysis.",
     )
     parser.add_argument(
         "--version",
@@ -38,8 +37,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run.add_parser(subparsers)
-    tiled.add_parser(subparsers)
+    run.add_parsers(subparsers)
     config.add_parsers(subparsers)
 
     completions_parser = subparsers.add_parser(
@@ -58,7 +56,7 @@ def make_parser() -> argparse.ArgumentParser:
 
 # WARNING: keep this guard, everything above it and the top-level imports of
 # the subcommand modules free of heavy imports (numpy, PIL, maskel.pipeline,
-# maskel._io). The guard lets shell completions exit in 81 ms instead of
+# maskel.io). The guard lets shell completions exit in 81 ms instead of
 # 800 ms. Tests in tests/test_cli.py::TestCompletionSpeed enforce this.
 if "_ARGCOMPLETE" in os.environ or (len(sys.argv) > 1 and sys.argv[1] == "completions"):
     if "_ARGCOMPLETE" in os.environ:

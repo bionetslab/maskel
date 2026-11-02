@@ -1,226 +1,167 @@
-"""`maskel run`: analyse a batch of images, optionally in parallel."""
+"""`maskel run`, `skeletonize`, `postprocess` and `features`: all stages or one at a time."""
 
 from __future__ import annotations
 
 import argparse
-import glob
 import os
-import sys
 from pathlib import Path
 
-from maskel.config import PipelineConfig, load_pipeline_config
-
-SUPPORTED_EXTENSIONS = frozenset(
-    {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".npy", ".mhd"}
+from maskel.config import (
+    ExtractionConfig,
+    OutputConfig,
+    PipelineConfig,
+    load_pipeline_config,
 )
 
 
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "run",
-        help="Run batch analysis on one or more images using a config JSON.",
+def add_parsers(subparsers: argparse._SubParsersAction) -> None:
+    """Register the run command and one command per stage."""
+    run = subparsers.add_parser(
+        "run", help="Run all stages on one image: voxel lists and features."
+    )
+    _add_image_args(run)
+    _add_common_args(run)
+    run.set_defaults(handler=run_all)
+
+    skeletonize = subparsers.add_parser(
+        "skeletonize", help="Stage 1: image -> voxel list (<name>_voxels.h5)."
+    )
+    _add_image_args(skeletonize)
+    _add_common_args(skeletonize)
+    skeletonize.set_defaults(handler=run_skeletonize)
+
+    postprocess = subparsers.add_parser(
+        "postprocess",
+        help="Stage 2: voxel list -> cleaned voxel list (<name>_voxels_post.h5).",
+    )
+    postprocess.add_argument("--input", required=True, help="Voxel list (.h5).")
+    _add_common_args(postprocess)
+    postprocess.set_defaults(handler=run_postprocess)
+
+    features = subparsers.add_parser(
+        "features", help="Stage 3: voxel list -> feature tables and graphs."
+    )
+    features.add_argument("--input", required=True, help="Voxel list (.h5).")
+    _add_common_args(features)
+    features.set_defaults(handler=run_features)
+
+
+def _add_image_args(parser: argparse.ArgumentParser) -> None:
+    """Arguments for commands that read an image."""
+    parser.add_argument(
+        "--input", required=True, help="Image file (HDF5, TIFF, PNG, NPY, MHD, ...)."
     )
     parser.add_argument(
-        "--input",
-        nargs="+",
-        required=True,
-        help="Input files, directories, or glob patterns.",
-    )
-    parser.add_argument(
-        "--config",
-        required=True,
-        help="Path to pipeline config JSON (can be exported from napari).",
-    )
-    parser.add_argument(
-        "--out",
-        required=True,
-        help="Output directory for CSVs and optional skeletons.",
-    )
-    parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Recursively search directories for supported image files.",
-    )
-    parser.add_argument(
-        "--jobs",
-        "-j",
-        type=int,
-        default=1,
-        help="Number of parallel workers (0 = all CPU cores).",
+        "--dataset", default=None, help="Dataset path inside an HDF5 input."
     )
     parser.add_argument(
         "--spacing",
         nargs="+",
         type=float,
         default=None,
-        help=(
-            "Per-axis physical pixel/voxel size (e.g. '--spacing 2.0 2.0' "
-            "for 2D or '--spacing 1.0 0.5 0.5' for 3D), overriding the "
-            "config's extraction.spacing for this whole batch run. Images "
-            "whose dimensionality doesn't match fall back to isotropic "
-            "spacing with a warning, rather than failing the batch."
-        ),
+        help="Per-axis voxel size, overriding the config's extraction.spacing.",
     )
-    parser.set_defaults(handler=run_batch)
-
-
-def discover_input_paths(inputs: list[str], recursive: bool) -> list[Path]:
-    paths: set[Path] = set()
-
-    for raw in inputs:
-        token = Path(raw)
-        if token.exists():
-            if token.is_file():
-                if token.suffix.lower() in SUPPORTED_EXTENSIONS:
-                    paths.add(token.resolve())
-            elif token.is_dir():
-                pattern = "**/*" if recursive else "*"
-                for p in token.glob(pattern):
-                    if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-                        paths.add(p.resolve())
-            continue
-
-        for match in glob.glob(raw, recursive=recursive):
-            p = Path(match)
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-                paths.add(p.resolve())
-
-    return sorted(paths)
-
-
-def compute_safe_names(input_paths: list[Path]) -> list[str]:
-    name_counts: dict[str, int] = {}
-    safe_names: list[str] = []
-    for p in input_paths:
-        base = p.stem
-        seen = name_counts.get(base, 0)
-        name_counts[base] = seen + 1
-        safe_names.append(base if seen == 0 else f"{base}_{seen + 1}")
-    return safe_names
-
-
-def process_one(
-    in_path: Path,
-    safe_name: str,
-    out_dir: Path,
-    config: PipelineConfig,
-) -> list[dict[str, object]]:
-    """Load, analyse, save one image. Returns one summary row per object for agg CSV.
-
-    Also the worker function for `--jobs`, so it must stay picklable by
-    reference (module-level).
-    """
-    from maskel._io import load_image, save_analysis_outputs
-    from maskel.pipeline import analyze_segmentation_mask
-
-    image = load_image(in_path)
-    result = analyze_segmentation_mask(mask=image, config=config)
-
-    save_analysis_outputs(
-        out_dir, safe_name, result, config.output, write_summary=False
+    parser.add_argument(
+        "--tile-shape",
+        nargs="+",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Tile core size, one value or one per axis. Omit for a single tile; "
+        "only HDF5 input is read tile by tile.",
+    )
+    parser.add_argument(
+        "--halo",
+        nargs="+",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Voxels read beyond each tile core for the thinning, one value or "
+        "one per axis (default: 100). Roughly 8x the largest radius in voxels.",
+    )
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=1,
+        help="Tiles processed in parallel (HDF5 input only; 0 = all cores). "
+        "Memory grows with each job by about one tile.",
+    )
+    parser.add_argument(
+        "--progress",
+        choices=("auto", "bar", "lines", "off"),
+        default="auto",
+        help="Tile progress display.",
     )
 
-    return [{"image": in_path.name, **row} for row in result.summary_features]
+
+def _add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Arguments every command takes."""
+    parser.add_argument("--config", default=None, help="Pipeline config JSON.")
+    parser.add_argument("--out", required=True, help="Output directory.")
 
 
-def run_batch(args: argparse.Namespace) -> int:
-    from maskel._io import write_csv
-
-    config = load_pipeline_config(Path(args.config))
-    if args.spacing is not None:
+def _config(args: argparse.Namespace) -> PipelineConfig:
+    """The config from --config (defaults without one), with --spacing applied."""
+    config = (
+        load_pipeline_config(Path(args.config))
+        if args.config
+        else PipelineConfig(extraction=ExtractionConfig(), output=OutputConfig())
+    )
+    if getattr(args, "spacing", None) is not None:
         config.extraction.spacing = tuple(args.spacing)
-    input_paths = discover_input_paths(args.input, recursive=args.recursive)
-    if not input_paths:
-        raise ValueError("No input files found. Check --input and --recursive.")
+    return config
 
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_names = compute_safe_names(input_paths)
-    jobs = (os.cpu_count() or 1) if args.jobs == 0 else args.jobs
-    if jobs < 1:
-        raise ValueError("--jobs must be 0 (auto) or a positive integer")
-    total = len(input_paths)
+def _tiling(args: argparse.Namespace) -> dict:
+    """Tiling keyword arguments from --tile-shape and --halo."""
+    from maskel.tiling import DEFAULT_HALO
 
-    if jobs == 1:
-        summary_rows = []
-        for idx, (in_path, safe_name) in enumerate(zip(input_paths, safe_names), 1):
-            print(f"[{idx}/{total}] {in_path.name}", flush=True)
-            summary_rows.extend(process_one(in_path, safe_name, out_dir, config))
-    else:
-        summary_rows = run_parallel(
-            input_paths, safe_names, out_dir, config, jobs, total
-        )
+    def unpack(values):
+        return values[0] if len(values) == 1 else tuple(values)
 
-    summary_rows.sort(key=lambda r: str(r.get("image", "")))
+    return {
+        "dataset": args.dataset,
+        "tile_shape": None if args.tile_shape is None else unpack(args.tile_shape),
+        "halo": DEFAULT_HALO if args.halo is None else unpack(args.halo),
+        "progress": args.progress,
+        "jobs": (os.cpu_count() or 1) if args.jobs == 0 else args.jobs,
+    }
 
-    if config.output.write_summary_csv:
-        write_csv(out_dir / "summary.csv", summary_rows)
 
-    print(
-        f"Processed {len(input_paths)} image(s) with config '{args.config}'. "
-        f"Outputs written to '{out_dir}'."
+def run_all(args: argparse.Namespace) -> int:
+    """Handler of `maskel run`."""
+    from maskel.pipeline import run
+
+    run(Path(args.input), Path(args.out), _config(args), **_tiling(args))
+    print(f"Outputs written to '{args.out}'.")
+    return 0
+
+
+def run_skeletonize(args: argparse.Namespace) -> int:
+    """Handler of `maskel skeletonize`."""
+    from maskel import pipeline
+
+    path = Path(args.input)
+    pipeline.run_skeletonize(
+        path, Path(args.out), _config(args), path.stem, **_tiling(args)
     )
     return 0
 
 
-def run_parallel(
-    input_paths: list[Path],
-    safe_names: list[str],
-    out_dir: Path,
-    config: PipelineConfig,
-    jobs: int,
-    total: int,
-) -> list[dict[str, object]]:
-    import multiprocessing as mp
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+def run_postprocess(args: argparse.Namespace) -> int:
+    """Handler of `maskel postprocess`."""
+    from maskel import pipeline
 
-    summary_rows: list[dict[str, object]] = []
-    errors: list[tuple[int, str, Exception]] = []
-    ctx = mp.get_context("spawn")
+    voxels, name = pipeline.load_voxels(Path(args.input))
+    pipeline.run_postprocess(voxels, Path(args.out), _config(args), name)
+    return 0
 
-    proc = "process" if jobs == 1 else "processes"
-    print(f"Spawning {jobs} worker {proc}...", flush=True)
 
-    ex = ProcessPoolExecutor(max_workers=jobs, mp_context=ctx)
-    futures = {
-        ex.submit(process_one, p, sn, out_dir, config): (idx, p.name)
-        for idx, (p, sn) in enumerate(zip(input_paths, safe_names), 1)
-    }
+def run_features(args: argparse.Namespace) -> int:
+    """Handler of `maskel features`."""
+    from maskel import pipeline
 
-    interrupted = False
-    try:
-        for fut in as_completed(futures):
-            idx, name = futures[fut]
-            try:
-                summary_rows.extend(fut.result())
-                print(f"[{idx}/{total}] {name}", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"[{idx}/{total}] {name} FAILED: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                errors.append((idx, name, exc))
-    except KeyboardInterrupt:
-        interrupted = True
-        print("\nInterrupted by user. Killing workers...", flush=True)
-        # Snapshot the workers first; shutdown() drops the executor's handles.
-        workers = mp.active_children()
-        ex.shutdown(wait=False, cancel_futures=True)
-        for w in workers:
-            w.kill()
-        for w in workers:
-            w.join()
-        print("Shutdown complete.", flush=True)
-    finally:
-        if not interrupted:
-            ex.shutdown(wait=True)
-
-    if errors:
-        failures = "\n".join(
-            f"  [{idx}/{total}] {name}: {exc}" for idx, name, exc in errors
-        )
-        raise RuntimeError(f"{len(errors)}/{total} image(s) failed:\n{failures}")
-
-    return summary_rows
+    voxels, name = pipeline.load_voxels(Path(args.input))
+    pipeline.run_features(voxels, Path(args.out), _config(args), name)
+    return 0

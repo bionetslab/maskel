@@ -6,8 +6,6 @@ import numpy as np
 from skan import summarize
 from skan.csr import Skeleton, skeleton_to_nx
 
-from maskel.features.graph import skeleton_graph_from_coordinates
-
 
 def _bresenham_line(
     p1: tuple[int, ...],
@@ -30,55 +28,28 @@ def _bresenham_line(
 
 def collapse_triangle_junctions(
     graph: Skeleton,
-    radius_matrix: np.ndarray | None = None,
+    radius: np.ndarray,
     threshold_factor: float = 2.5,
-) -> Skeleton | None:
-    """Collapse small cycles (triangle/diamond junction artifacts) in a
-    skeleton graph into single centroid pixels.
-
-    Parameters
-    ----------
-    graph : Skeleton
-        skan Skeleton graph (e.g. from `build_skeleton_graph`).
-    radius_matrix : ndarray, optional
-        EDT radius array from `compute_radii`. When supplied, the
-        local diameter is estimated from the radii at the cycle node
-        positions. Without it the diameter defaults to 1 pixel.
-    threshold_factor : float, optional
-        Cycles whose perimeter is less than
-        ``threshold_factor × local_diameter`` are collapsed.
-        Default is 2.5.
-
-    Returns
-    -------
-    cleaned : Skeleton or None
-        *graph* itself when there is nothing to collapse, otherwise a graph
-        rebuilt (with *graph*'s spacing) from the pixels left after
-        collapsing. ``None`` when no two of those pixels are adjacent
-        anymore, i.e. nothing is left to build a graph from.
-    """
+) -> tuple[np.ndarray, np.ndarray]:
+    """Voxels and radii of *graph* after collapsing cycles smaller than *threshold_factor* local diameters."""
 
     shape = tuple(graph.skeleton_shape)
 
     # 1. junction graph: nodes are junctions/endpoints, edges the paths
+    unchanged = graph.coordinates, radius
     summary = summarize(graph, separator="-")
     if summary.empty:
-        return graph
+        return unchanged
 
     G = skeleton_to_nx(graph, summary)
 
-    # 2. node -> pixel coordinate lookup from edge paths
-    # each edge stores its full pixel path (numpy array of coordinates)
-    # the first pixel of the path is the position of one endpoint node,
-    # the last pixel is the position of the other endpoint node.
-    # we save them so we can refer to a node's position later.
-    node_coords: dict[int, tuple[int, ...]] = {}
-    for u, v, data in G.edges(data=True):
-        path = data["path"]
-        if u not in node_coords:
-            node_coords[u] = tuple(path[0])
-        if v not in node_coords:
-            node_coords[v] = tuple(path[-1])
+    # 2. node -> pixel coordinate lookup
+    # junction graph nodes are pixel ids, i.e. rows of graph.coordinates.
+    # (Not from the edge paths: networkx may report an edge as (dst, src)
+    # while its path still runs from src to dst.)
+    node_coords: dict[int, tuple[int, ...]] = {
+        n: tuple(int(c) for c in graph.coordinates[n]) for n in G.nodes
+    }
 
     # 3. find cycles
     # skan produces a MultiGraph but nx.cycle_basis requires a plain Graph
@@ -93,17 +64,17 @@ def collapse_triangle_junctions(
             "skipping cleanup for this object.",
             stacklevel=2,
         )
-        return graph
+        return unchanged
 
     if not cycles:
-        return graph
+        return unchanged
 
     # 4. perimeter & local diameter per cycle
     # for each cycle we compute:
     #   a) perimeter - sum of Euclidean distances along the edge paths
     #      that form the cycle.
-    #   b) local diameter - estimated from the EDT radius at each
-    #      cycle node (if radius_matrix is available), otherwise default 1.
+    #   b) local diameter - estimated from the radius at each
+    #      cycle node, or 1 when none is positive.
     #
     # a legit branch point (like a bifurcation) will have a wide
     # perimeter relative to the local diameter. A spurious triangle-
@@ -111,6 +82,7 @@ def collapse_triangle_junctions(
     # then use the ratio perimeter / diameter to tell them apart.
     perimeters: list[float] = []
     diameters: list[float] = []
+    lookup = _RadiusLookup(graph.coordinates, radius, shape)
 
     for cycle in cycles:
         # walk consecutive node pairs (u, v) around the cycle.
@@ -131,17 +103,11 @@ def collapse_triangle_junctions(
 
         perimeters.append(perim)
 
-        # Estimate local diameter from the EDT radius at each
-        # junction node. The radius_matrix holds the distance from
-        # each foreground pixel to the nearest background pixel.
-        # We take the mean radius and double it to get a diameter estimate.
-        if radius_matrix is not None:
-            radii = [radius_matrix[node_coords[n]] for n in cycle if n in node_coords]
-            radii = [r for r in radii if r > 0]
-            local_diam = 2.0 * float(np.mean(radii)) if radii else 1.0
-        else:
-            local_diam = 1.0
-        diameters.append(local_diam)
+        # Estimate local diameter from the radius at each junction node:
+        # the mean radius, doubled.
+        radii = [lookup.get(node_coords[n], 0.0) for n in cycle if n in node_coords]
+        radii = [r for r in radii if r > 0]
+        diameters.append(2.0 * float(np.mean(radii)) if radii else 1.0)
 
     # 5. filter small cycles
     # a cycle whose perimeter < threshold_factor * local_diameter is
@@ -149,7 +115,7 @@ def collapse_triangle_junctions(
     small_mask = np.array(perimeters) < threshold_factor * np.array(diameters)
     small_cycles = [cycles[i] for i in range(len(cycles)) if small_mask[i]]
     if not small_cycles:
-        return graph
+        return unchanged
 
     # 6. group overlapping cycles (share nodes)
     # adjacent cycles (e.g. two triangles sharing a pixel) must be
@@ -193,6 +159,8 @@ def collapse_triangle_junctions(
 
     next_node_id = max(G.nodes()) + 1
     all_removed_nodes: set[int] = set()
+    # radii of voxels this step adds; every other voxel keeps its own
+    added_radius: dict[tuple[int, ...], float] = {}
 
     for nodes in super_cycles:
         cycle_set: set[int] = set(nodes)
@@ -213,6 +181,9 @@ def collapse_triangle_junctions(
         centroid_coord = tuple(
             min(max(c, 0), s - 1) for c, s in zip(centroid_coord, shape)
         )
+        cycle_radii = [lookup.get(tuple(c), 0.0) for c in coords_arr]
+        cycle_radii = [r for r in cycle_radii if r > 0]
+        centroid_radius = float(np.mean(cycle_radii)) if cycle_radii else 0.0
 
         # remove edges connecting nodes within the cycle
         for u in cycle_set:
@@ -291,6 +262,13 @@ def collapse_triangle_junctions(
                 # the line to avoid duplicating the start_coord pixel
                 line = _bresenham_line(start_coord, centroid_coord)
                 line_arr = np.array(line, dtype=np.intp)
+                # radii along the new line: linear from the arm's end to the centroid
+                start_radius = lookup.get(start_coord, centroid_radius)
+                for k, pt in enumerate(line[1:], start=1):
+                    t = k / (len(line) - 1)
+                    added_radius.setdefault(
+                        pt, start_radius + t * (centroid_radius - start_radius)
+                    )
                 full_path = (
                     np.vstack([truncated, line_arr[1:]])
                     if len(line_arr) > 1
@@ -302,13 +280,32 @@ def collapse_triangle_junctions(
 
             G.add_edge(ext_node, cid, path=full_path)
 
-    # 8. rebuild the skeleton graph from the pixels of the remaining paths
-    # (the pixels an image drawn from the paths would have, so this gives
-    # the same graph as rasterising them and building it from that image)
+    # 8. the voxels of the remaining paths, with measured radii where known
     if G.number_of_edges() == 0:
-        return None
+        empty = np.empty((0, len(shape)), dtype=np.intp)
+        return empty, np.empty(0)
 
     pixels = np.unique(
         np.concatenate([path for _, _, path in G.edges.data("path")]), axis=0
     )
-    return skeleton_graph_from_coordinates(pixels, shape, spacing=graph.spacing)
+    radii = np.array(
+        [lookup.get(tuple(p), added_radius.get(tuple(p), 0.0)) for p in pixels.tolist()]
+    )
+    return pixels, radii
+
+
+class _RadiusLookup:
+    """Radius of a voxel by its coordinates, for voxels sorted by position."""
+
+    def __init__(self, coords: np.ndarray, radius: np.ndarray, shape: tuple[int, ...]):
+        self.linear = np.ravel_multi_index(np.asarray(coords, dtype=np.intp).T, shape)
+        self.radius = radius
+        self.shape = shape
+
+    def get(self, coord: tuple[int, ...], default: float) -> float:
+        """Radius at *coord*, or *default* if it is not one of the voxels."""
+        key = np.ravel_multi_index(coord, self.shape)
+        i = int(np.searchsorted(self.linear, key))
+        if i < len(self.linear) and self.linear[i] == key:
+            return float(self.radius[i])
+        return default
