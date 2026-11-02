@@ -1,6 +1,6 @@
 Skeletonization and graph-based feature extraction for branching biological structures — vasculature, fibers, neurites, and other network-like objects — from 2D or 3D binary or multi-label segmentation masks.
 
-Maskel is the core algorithm package: thinning, feature extraction, and the batch CLI. It has no napari dependency — for the interactive napari plugin, see **[napari-maskel](https://bionetslab.github.io/napari-maskel/)**. For benchmarks and the HRF-based analysis notebooks, see [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations) on GitHub.
+Maskel is the core algorithm package: thinning, feature extraction, and the CLI. It has no napari dependency — for the interactive napari plugin, see **[napari-maskel](https://bionetslab.github.io/napari-maskel/)**. For benchmarks and the HRF-based analysis notebooks, see [maskel-evaluations](https://github.com/bionetslab/maskel-evaluations) on GitHub.
 
 ## What it does
 
@@ -24,7 +24,7 @@ This is an example of running maskel on a 2D binary segmentation mask. The data 
 
 ![HRF retinal vessel output, colored by mean branch radius](assets/screenshots/hrf-2d-output.png)
 
-The extracted skeleton, colored here by each branch's mean radius (`mean_radius` in `<image>_branches.csv`) — rendered from the exported branch CSV for illustration, since maskel's CLI itself only writes the raw skeleton mask (optionally as a PNG, for 2D input) and data (CSVs, arrays, graphs) — never a rendered/annotated visualization like this one. Use the exported `.graphml`/`.pkl` graph, or [napari-maskel](https://bionetslab.github.io/napari-maskel/), to visualize interactively.
+The extracted skeleton, colored here by each branch's mean radius (`mean_radius` in `<image>_branches.csv`) — rendered from the exported branch CSV for illustration, since maskel's CLI itself only writes data (voxel lists, CSVs, graphs) — never a rendered/annotated visualization like this one. Use the exported `.graphml`/`.pkl` graph, or [napari-maskel](https://bionetslab.github.io/napari-maskel/), to visualize interactively.
 
 ### 2D multi-label mask
 
@@ -34,7 +34,7 @@ A multi-object instance segmentation map (more than one distinct nonzero label) 
 
 ![Macrophage multi-label output](assets/screenshots/macrophage-2d-output.png)
 
-Every branch, node, and summary row is tagged with the `object_id` it came from, so the per-object rows in `summary.csv`/`<image>_branches.csv`/`<image>_nodes.csv` stay consistent with the IDs in the original mask. Since maskel's CLI processes a whole batch of images in one call, pointing `--input` at a directory or glob of every frame in this video — with the extraction settings tuned on this one example frame — reproducibly extracts these same per-object features across the whole sequence, one row per object per frame.
+Every branch, node, and summary row is tagged with the `object_id` it came from, so the per-object rows in `<image>_summary.csv`/`<image>_branches.csv`/`<image>_nodes.csv` stay consistent with the IDs in the original mask. Running `maskel run` on every frame of this video with the same config — tuned on this one example frame — reproducibly extracts these same per-object features across the whole sequence.
 
 ## General usage of the CLI
 
@@ -44,41 +44,48 @@ Every branch, node, and summary row is tagged with the `object_id` it came from,
 4. Run it:
 
 ```sh
-maskel run --input /path/to/images --config config.json --out outputs --jobs 0
+maskel run --input image.tif --config config.json --out outputs
 ```
+
+### Stages
+
+A run has three stages, each also available as its own command:
+
+1. `maskel skeletonize` — mask → voxel list `<image>_voxels.h5`: preprocessing, thinning and the radius of every skeleton voxel.
+2. `maskel postprocess` — voxel list → cleaned voxel list `<image>_voxels_post.h5`: junction cleanup and spur pruning, on the skeleton graph. Voxels added by junction cleanup get estimated radii.
+3. `maskel features` — voxel list → feature tables and graphs.
+
+`maskel run` does all three and writes both voxel lists. `postprocess` and `features` take a voxel list as `--input`, so stage 2 or 3 can be re-run with other settings without thinning again.
+
+A voxel list is an HDF5 file with the datasets `coords` (global voxel indices), `radius` and `label` (one row per skeleton voxel), per-label mask statistics under `labels/`, and the image shape, spacing and config as attributes.
 
 ### Input
 
-`--input` takes one or more of:
+`--input` is one image: `.h5`/`.hdf5` (pick the dataset with `--dataset` when the file holds more than one), `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.npy` or `.mhd`. It is either a plain binary segmentation mask or a multi-object instance segmentation map (see Examples above for how the latter is handled).
 
-- a single file path
-- a directory (every supported file directly inside it; add `--recursive` to also search subdirectories)
-- a glob pattern (e.g. `"data/*.tif"`; also expanded recursively with `--recursive`)
+### Large images: tiles
 
-Supported file extensions: `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.npy`, `.mhd`. Each file is either a plain binary segmentation mask or a multi-object instance segmentation map (see Examples above for how the latter is handled). Two inputs that resolve to the same filename stem (e.g. from different folders) get a numeric suffix (`_2`, `_3`, ...) in their output names, so results never silently overwrite each other.
+`--tile-shape N` (one value, or one per axis) splits the image into tiles that are processed one at a time, so only one tile has to fit in memory. Only HDF5 input is read tile by tile; every other format is loaded whole. Without `--tile-shape` the whole image is a single tile. Tiled and untiled runs give the same result as long as the halo is large enough.
+
+`--halo N` (one value, or one per axis; default `100`) is how many voxels are read around each tile for the thinning. As a rule of thumb it should be about 8 × the largest vessel radius in voxels, per axis; a run warns when the measured radii suggest it is too small. Preprocessing adds its own margin on top.
+
+`--jobs N` (`-j`) processes `N` tiles at the same time, each in its own process (HDF5 input only; `0` uses all cores). The result is identical to a serial run. Memory grows by about one tile per job, so `--jobs` and `--tile-shape` together set the memory budget. Calling `maskel.skeletonize.skeletonize(..., jobs=N)` from your own script needs the usual `if __name__ == "__main__":` guard, since the workers are started fresh.
 
 ### Output
 
-`--out` is a directory that ends up containing:
-
-- `summary.csv` — one row per object per image, aggregated across the whole batch
-- one subfolder per input image (named after its filename stem), holding whichever per-image/per-object files are enabled under `output` (skeleton array, branch/node CSVs, radius matrix, GraphML/pickle graphs — see Configurable parameters below for exact filenames)
+`--out` is a directory that ends up containing the voxel lists and whichever files are enabled under `output` (summary/branch/node CSVs, GraphML/pickle graphs — see Configurable parameters below for exact filenames).
 
 ### Spacing override
 
-`--spacing` overrides `extraction.spacing` in the config for the whole run, e.g. `--spacing 2.0 2.0` for 2D or `--spacing 1.0 0.5 0.5` for 3D. An image whose dimensionality doesn't match the given spacing falls back to isotropic spacing for that one image, with a warning, rather than failing the whole batch.
-
-### Parallelism
-
-`--jobs`/`-j` spawns a process pool over the input images, one process per image; `0` uses all CPU cores, and the default, `1`, processes images one at a time in the main process. `Ctrl-C` triggers a clean worker shutdown rather than hanging.
+`--spacing` overrides `extraction.spacing` in the config, e.g. `--spacing 2.0 2.0` for 2D or `--spacing 1.0 0.5 0.5` for 3D. An image whose dimensionality doesn't match falls back to isotropic spacing with a warning.
 
 ## Configurable parameters
 
-A config JSON has two sections, `extraction` and `output` (plus a `schema_version` — currently 6 — that must match exactly), matching `maskel.config.ExtractionConfig`/`OutputConfig`. It's the same JSON produced by `maskel init`, consumed by `maskel run --config`, and exported/imported by napari-maskel's **Save recipe**/**Load recipe**.
+A config JSON has two sections, `extraction` and `output` (plus a `schema_version` — currently 7 — that must match exactly), matching `maskel.config.ExtractionConfig`/`OutputConfig`. It's the same JSON produced by `maskel init`, consumed by `maskel run --config`, and exported/imported by napari-maskel's **Save recipe**/**Load recipe**.
 
 ### Physical spacing
 
-- `extraction.spacing` (list[float] or `null`, default `null`) — per-axis physical pixel/voxel size (length must match the image's dimensionality: 2 for 2D, 3 for 3D). When set, length/radius/area/volume features come out in physical units instead of pixel units. A per-image mismatch falls back to `null` (isotropic pixel units) with a warning rather than failing the batch. Box-counting `fractal_dimension` is only valid for isotropic voxels, so it's forced to `0.0` (with a warning) whenever spacing is set and anisotropic. Overridable per-run with `maskel run --spacing`.
+- `extraction.spacing` (list[float] or `null`, default `null`) — per-axis physical pixel/voxel size (length must match the image's dimensionality: 2 for 2D, 3 for 3D). When set, length/radius/area/volume features come out in physical units instead of pixel units. A mismatch falls back to `null` (isotropic pixel units) with a warning. Box-counting `fractal_dimension` is only valid for isotropic voxels, so it's forced to `0.0` (with a warning) whenever spacing is set and anisotropic. Overridable per-run with `maskel run --spacing`.
 
 ### Extraction layers
 
@@ -86,12 +93,12 @@ A config JSON has two sections, `extraction` and `output` (plus a `schema_versio
 - `extraction.branch_color_property` (str, default `"tortuosity"`) — which branch property napari-maskel colors its branches layer by. No effect on the CLI's own output; only relevant when the config is shared with the plugin.
 - `extraction.branch_text` (bool, default `false`) — whether napari-maskel overlays branch ID/length/tortuosity text on its branches layer. Likewise CLI-inert.
 - `extraction.nodes` (bool, default `false`) — extract per-node features, written to `<image>_nodes.csv` when `output.write_node_csv` is also on.
-- `extraction.summary` (bool, default `true`) — compute per-object summary features, written to `summary.csv` when `output.write_summary_csv` is also on.
+- `extraction.summary` (bool, default `true`) — compute per-object summary features, written to `<image>_summary.csv` when `output.write_summary_csv` is also on.
 
 ### Cleanup
 
 - `extraction.fill_holes` (bool, default `false`) — fill holes in the binary segmentation before thinning.
-- `extraction.max_hole_size` (int, default `0`) — maximum hole area (px) to fill when `fill_holes` is true; `0` fills all holes.
+- `extraction.max_hole_diameter` (float, default `0`) — when `fill_holes` is true, only holes that fit in a box of this size per side are filled (in physical units once `spacing` is set, pixels otherwise); `0` fills all holes, which only works without tiling.
 - `extraction.opening_radius` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological opening before thinning; `0` disables it. Removes thin bridges, flaps and specks the ball doesn't fit into. Runs before the closing. Same border handling as the closing.
 - `extraction.closing_iterations` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological closing before thinning; `0` disables it. Away from the array border this gives the same result as `skimage.morphology.closing(mask, ball(r))`. At the border, the edge voxels are repeated outward first, so objects touching it are neither eroded nor treated as ending there (skimage instead treats the outside as foreground, which also fills background strips narrower than the radius along the border). (The key keeps its old name for config compatibility; radius 1 equals one iteration of the old cross-shaped closing.)
 - `extraction.show_preprocessed` (bool, default `false`) — whether napari-maskel adds a layer showing the mask after preprocessing. Purely a display toggle for the plugin; the CLI has no output file for the preprocessed mask.
@@ -104,16 +111,13 @@ A config JSON has two sections, `extraction` and `output` (plus a `schema_versio
 ### Advanced features
 
 - `extraction.fractal_dimension` (bool, default `false`) — compute the skeleton's box-counting fractal dimension as a summary feature (see [Glossary](glossary.md)). Forced to `0.0` whenever `spacing` is set and anisotropic.
-- `extraction.mask_radius` (bool, default `false`) — estimate local radius via a Euclidean distance transform of the segmentation. Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node) and for `output.write_radius`.
+- `extraction.mask_radius` (bool, default `false`) — report the local radius (distance from each skeleton voxel to the nearest background voxel). Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node).
 
 ### Output settings
 
-- `output.write_skeleton_npy` (bool, default `true`) — save the skeleton as `<image>_skeleton.npy`.
-- `output.write_skeleton_png` (bool, default `false`) — save the binary skeleton as `<image>_skeleton.png` (skipped with a warning for 3D input).
-- `output.write_summary_csv` (bool, default `true`) — write the aggregated `summary.csv`, one row per object per image.
+- `output.write_summary_csv` (bool, default `true`) — write `<image>_summary.csv`, one row per object.
 - `output.write_branch_csv` (bool, default `false`) — write `<image>_branches.csv` (requires `extraction.branches`).
 - `output.write_node_csv` (bool, default `false`) — write `<image>_nodes.csv` (requires `extraction.nodes`).
-- `output.write_radius` (bool, default `false`) — write the per-pixel radius matrix as `<image>_radius.npy` (requires `extraction.mask_radius`).
 - `output.write_graphml` (bool, default `false`) — write the skeleton graph as `<image>_<object_id>_graph.graphml`, one file per object (nodes = graph nodes, edges = branches).
 - `output.write_networkx_graph` (bool, default `false`) — write the same graph as `<image>_<object_id>_graph.pkl`, a pickled `networkx.MultiGraph` — richer than GraphML (keeps NaN values and native Python types) but only readable from Python.
 
@@ -121,7 +125,7 @@ An `output.write_*` flag set without its required `extraction.*` flag is rejecte
 
 ## Sharing a config with napari-maskel
 
-The same config JSON works in both directions: a file written by `maskel init` (or hand-edited, or produced by any earlier `maskel run`) can be loaded straight into the napari-maskel widget with **Load recipe**, and a config tuned interactively in the widget can be exported with **Save recipe** and passed to `maskel run --config` for reproducible batch processing — as in the multi-label example above. Both consume exactly the same schema described in Configurable parameters, since `maskel.config` is the single source of truth both projects import.
+The same config JSON works in both directions: a file written by `maskel init` (or hand-edited, or copied from a voxel list's attributes) can be loaded straight into the napari-maskel widget with **Load recipe**, and a config tuned interactively in the widget can be exported with **Save recipe** and passed to `maskel run --config` for reproducible processing — as in the multi-label example above. Both consume exactly the same schema described in Configurable parameters, since `maskel.config` is the single source of truth both projects import.
 
 ## License
 

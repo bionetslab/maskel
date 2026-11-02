@@ -1,537 +1,112 @@
-"""Shared analysis pipeline used by the CLI (and by napari-maskel, which wraps it)."""
+"""The three stages chained: mask -> voxel list -> cleaned voxel list -> features."""
 
 from __future__ import annotations
 
-import logging
 import sys
-import time
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-import numpy as np
-from scipy import ndimage as ndi
-from skan import summarize
+from maskel.config import ExtractionConfig, PipelineConfig
+from maskel.features import analyze
+from maskel.io.images import HDF5_EXTENSIONS, open_image
+from maskel.io.tables import write_features
+from maskel.io.voxels import VoxelList, read_voxels, write_voxels
+from maskel.postprocessing import postprocess
+from maskel.skeletonize import skeletonize
+from maskel.tiling import DEFAULT_HALO
 
-from maskel.config import PipelineConfig
-from maskel.features import (
-    aggregate_segment_stats,
-    build_skeleton_graph,
-    compute_radii,
-    compute_tortuosity,
-    extract_node_features,
-    extract_summary_features,
-    per_segment_radii,
-    skeleton_image_from_graph,
-)
-from maskel.postprocessing import collapse_triangle_junctions, prune_short_spurs
-from maskel.preprocessing import (
-    _preprocessing_enabled,
-    _preprocessing_reach,
-    preprocess_binary,
-)
-from maskel.thin import lee94_thin
-
-if TYPE_CHECKING:
-    from pandas import DataFrame
-    from skan import Skeleton
-
-# A dedicated logger (rather than bare print statements) so that progress
-# messages ("processing image of shape ...", object counts, timing) are
-# visible on stdout by default - without requiring the CLI or napari-maskel
-# to configure anything - while staying easy for either of them, or an
-# embedding application, to reconfigure or silence later (e.g. by adding a
-# root handler and calling logging.getLogger("maskel").propagate = True, or
-# just raising this logger's level). Guarded against adding a second handler
-# if this module is ever re-imported (e.g. importlib.reload in a notebook).
-# Left propagating (the logging default) rather than isolated, so pytest's
-# caplog - which attaches its capturing handler at the root logger - can see
-# these records in tests without extra setup.
-logger = logging.getLogger("maskel")
-if not logger.handlers:
-    _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s"))
-    logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
-
-# Printed at most once per process: box-counting fractal dimension is
-# invalid for anisotropic voxels, so it's forced to 0.0 whenever spacing is
-# both provided and anisotropic. This flag keeps a batch run (many images,
-# same config) from repeating the same warning once per object/image.
-_fractal_anisotropic_warned = False
+SKELETON_SUFFIX = "_voxels"
+POSTPROCESSED_SUFFIX = "_voxels_post"
 
 
-@dataclass
-class ObjectResult:
-    """Analysis outputs for one object, tagged and positioned in the full image.
-
-    ``summary_features``/``branch_records``/``node_records`` are already
-    tagged with ``object_id`` (node coordinates already offset into the full
-    image). ``graph``/``branch_data``/``radius_matrix`` remain in this
-    object's own local (crop) coordinates - kept separate per object, rather
-    than merged into one graph, since objects are skeletonized independently
-    and touching-but-distinct objects must stay topologically separate.
-    *offset* is the crop's origin in the full image, for anything derived
-    from ``graph``/``branch_data`` that needs global coordinates (e.g.
-    ``graph.path_coordinates(i) + offset``).
-    """
-
-    object_id: int
-    offset: tuple[int, ...]
-    summary_features: dict[str, float]
-    branch_records: list[dict[str, object]]
-    node_records: list[dict[str, object]]
-    graph: Skeleton | None = None
-    branch_data: DataFrame | None = None
-    radius_matrix: np.ndarray | None = None
-
-
-@dataclass
-class AnalysisResult:
-    """Container for single-image analysis outputs.
-
-    Deliberately napari-free: napari-maskel builds its own LayerDataTuples
-    from these fields rather than this package returning them directly.
-
-    An input with more than one distinct nonzero value is treated as an
-    instance segmentation map (each value its own object); a plain binary
-    mask is treated as a single implicit object with id 1. ``objects`` has
-    one entry per object; ``skeleton``/``radius_matrix``/
-    ``preprocessed_binary`` are stitched back to the full input shape, since
-    (unlike per-object lists) that stitching is real work only worth doing
-    once, centrally, regardless of how many consumers want a full-image view.
-    Despite its name, ``preprocessed_binary`` is only binary (0/1) for a
-    plain binary mask input - for a multi-object instance segmentation map
-    it carries each object's own id (not just presence/absence), so a
-    "show preprocessed" layer keeps the original per-object labels instead
-    of collapsing every object into one undifferentiated blob.
-    """
-
-    skeleton: np.ndarray
-    objects: list[ObjectResult]
-    radius_matrix: np.ndarray | None = None
-    preprocessed_binary: np.ndarray | None = None
-
-    @property
-    def summary_features(self) -> list[dict[str, float]]:
-        """One dict per object that has any (empty when summary is disabled)."""
-        return [obj.summary_features for obj in self.objects if obj.summary_features]
-
-    @property
-    def branch_records(self) -> list[dict[str, object]]:
-        """All objects' branch records, flattened."""
-        return [record for obj in self.objects for record in obj.branch_records]
-
-    @property
-    def node_records(self) -> list[dict[str, object]]:
-        """All objects' node records, flattened."""
-        return [record for obj in self.objects for record in obj.node_records]
-
-
-def _skeleton_has_no_branches(skeleton: np.ndarray) -> bool:
-    """True when no two foreground pixels in *skeleton* are adjacent (full
-    connectivity), i.e. every "branch" is an isolated single pixel.
-
-    ``skan.Skeleton`` (via ``build_skeleton_graph``) requires at least one graph edge to build its sparse path matrix and
-    raises a low-level ``ValueError`` from inside scipy.sparse otherwise -
-    this is checked for up front so a degenerate but perfectly valid input
-    (e.g. a single-pixel object, or a mask whose thinned skeleton happens to
-    leave only isolated points) degrades to the same empty-result path as
-    an all-background skeleton, rather than crashing.
-    """
-    if not skeleton.any():
-        return True
-    structure = ndi.generate_binary_structure(skeleton.ndim, skeleton.ndim)
-    labels, _ = ndi.label(skeleton > 0, structure=structure)
-    sizes = np.bincount(labels.ravel())[1:]  # drop the background (label 0) count
-    return bool(sizes.max() <= 1)
-
-
-def _iter_object_crops(
-    mask: np.ndarray,
-    pad: int = 1,
-) -> list[tuple[int, tuple[slice, ...], np.ndarray]]:
-    """Split a segmentation mask into per-object, bounding-box-cropped binary arrays.
-
-    A plain binary mask (at most one distinct nonzero value) is treated as a
-    single implicit object with id 1. A mask with more than one distinct
-    nonzero value is treated as an instance segmentation map, where each
-    distinct value is its own object - this is how touching-but-distinct
-    objects end up correctly separated rather than merged into one skeleton.
-
-    Each crop is the object's bounding box padded by *pad* voxels of
-    background (clamped to the array bounds), so local operations (thinning,
-    EDT) aren't affected by the crop boundary coinciding with the object's
-    own boundary. The caller widens *pad* by the preprocessing reach (see
-    ``_preprocessing_reach``), so the crop edge stays background for the
-    opening and closing, whose padding repeats the crop's edge voxels.
-
-    Returns
-    -------
-    list of (object_id, bbox, binary_crop)
-        *bbox* is a tuple of slices into *mask* (the padded bounding box).
-        *binary_crop* is the object's mask within *bbox*, as a uint8 array.
-
-    Notes
-    -----
-    Costs that scale with the *whole* mask rather than each object's own
-    crop are kept to the minimum needed to find object bounding boxes: one
-    ``ndi.find_objects`` pass, and a dtype cast only when *mask* isn't
-    already an integer array. In particular this avoids ``np.unique``
-    (which would sort every foreground pixel's value) purely to tell a
-    plain binary mask apart from a labeled one - a mask with exactly one
-    surviving object *is* that binary-mask case, whatever its raw
-    foreground value, so the same ``find_objects`` pass answers both
-    questions at once.
-    """
-    if not mask.any():
-        return []
-
-    labels = mask if np.issubdtype(mask.dtype, np.integer) else mask.astype(np.int64)
-    bboxes = ndi.find_objects(labels)
-    raw_ids = [i + 1 for i, bbox in enumerate(bboxes) if bbox is not None]
-
-    # A mask with only one object - including a plain binary mask, whatever
-    # its raw foreground value - is reported as object id 1; a genuine
-    # multi-object instance segmentation keeps each object's own label value.
-    report_ids = [1] if len(raw_ids) == 1 else raw_ids
-
-    crops = []
-    for raw_id, object_id in zip(raw_ids, report_ids, strict=True):
-        bbox = bboxes[raw_id - 1]
-        padded = tuple(
-            slice(max(s.start - pad, 0), min(s.stop + pad, dim))
-            for s, dim in zip(bbox, mask.shape, strict=True)
-        )
-        binary_crop = (labels[padded] == raw_id).astype(np.uint8)
-        crops.append((object_id, padded, binary_crop))
-
-    return crops
-
-
-@dataclass
-class _ObjectResult:
-    """Analysis outputs for a single already-cropped, already-binary object,
-    in that crop's own local coordinates and not yet tagged with an object id
-    - see ``ObjectResult`` for the packaged, positioned, public equivalent.
-    """
-
-    skeleton: np.ndarray
-    summary_features: dict[str, float]
-    branch_records: list[dict[str, object]]
-    node_records: list[dict[str, object]]
-    graph: Skeleton | None = None
-    branch_data: DataFrame | None = None
-    radius_matrix: np.ndarray | None = None
-    preprocessed_binary: np.ndarray | None = None
-
-
-def _analyze_single_object(
-    binary: np.ndarray,
+def run(
+    input_path: Path,
+    out_dir: Path,
     config: PipelineConfig,
-    spacing: tuple[float, ...] | None = None,
-) -> _ObjectResult:
-    """Run the skeletonization + extraction pipeline for one binary object.
-
-    *binary* is expected to already be a single object's cropped binary mask
-    (see ``_iter_object_crops``); this is the same pipeline the whole image
-    used to go through as a single unit before per-object splitting.
-
-    *spacing* is the already-validated per-axis physical pixel/voxel size
-    for this object's crop (``None`` for isotropic unit spacing) - the
-    dimensionality check against the full mask happens once in
-    ``analyze_segmentation_mask``, not per object.
-    """
-    global _fractal_anisotropic_warned
-    # -- optional: morphological preprocessing -------------------------
-    preprocessed_binary: np.ndarray | None = None
-    if _preprocessing_enabled(config):
-        binary = preprocess_binary(
-            binary,
-            closing_iterations=config.extraction.closing_iterations,
-            opening_radius=config.extraction.opening_radius,
-            fill_holes=config.extraction.fill_holes,
-            max_hole_size=config.extraction.max_hole_size,
-        )
-        preprocessed_binary = binary
-
-    skeleton = lee94_thin(binary)
-
-    if _skeleton_has_no_branches(skeleton):
-        return _ObjectResult(
-            skeleton=skeleton,
-            summary_features={},
-            branch_records=[],
-            node_records=[],
-            preprocessed_binary=preprocessed_binary,
-        )
-
-    # -- pre-compute EDT once for reuse, if anything below needs it ------
-    # `binary` doesn't change from here on (only `skeleton`/`graph` do), so
-    # the same distance transform serves both junction cleanup's temporary
-    # radius matrix and the final mask_radius output below rather than
-    # being recomputed - the EDT is often the most expensive step here,
-    # especially in 3D.
-    edt = None
-    if config.extraction.junction_cleanup or config.extraction.mask_radius:
-        edt = ndi.distance_transform_edt(binary, sampling=spacing)
-
-    # -- build graph & branch data on the thinned skeleton ---------------
-    graph = build_skeleton_graph(skeleton, spacing=spacing)
-
-    # -- optional: collapse triangle junction artifacts -----------------
-    # (requires EDT; works on the graph and returns a rebuilt graph, from
-    # which the skeleton image is redrawn for the image-based steps below)
-    if config.extraction.junction_cleanup:
-        rm_temp, _ = compute_radii(binary, skeleton, spacing=spacing, edt=edt)
-        cleaned = collapse_triangle_junctions(
-            graph,
-            radius_matrix=rm_temp,
-            threshold_factor=config.extraction.cleanup_threshold_factor,
-        )
-        if cleaned is None:
-            return _ObjectResult(
-                skeleton=np.zeros_like(skeleton),
-                summary_features={},
-                branch_records=[],
-                node_records=[],
-                preprocessed_binary=preprocessed_binary,
-            )
-        if cleaned is not graph:
-            graph = cleaned
-            skeleton = skeleton_image_from_graph(graph)
-
-    # -- optional: prune short spur branches -----------------------------
-    # (a spur: one node is an endpoint (degree 1), the other a junction
-    # (degree > 1), and the branch is shorter than the configured
-    # threshold - usually a thinning artifact rather than a real branch
-    # tip. Pruning changes the skeleton's pixels, so the graph is rebuilt
-    # from scratch afterwards.)
-    if config.extraction.prune_spurs:
-        # Pruning may expose new short spurs (an endpoint's parent junction
-        # can become an endpoint once its own spur is removed), so the
-        # operation is repeated on its own output up to spur_iterations times.
-        for _ in range(max(1, config.extraction.spur_iterations)):
-            pre_prune_branch_data = summarize(graph, separator="-")
-            skeleton = prune_short_spurs(
-                skeleton,
-                graph,
-                pre_prune_branch_data,
-                min_length=config.extraction.min_spur_length,
-            )
-            if _skeleton_has_no_branches(skeleton):
-                return _ObjectResult(
-                    skeleton=skeleton,
-                    summary_features={},
-                    branch_records=[],
-                    node_records=[],
-                    preprocessed_binary=preprocessed_binary,
-                )
-            graph = build_skeleton_graph(skeleton, spacing=spacing)
-
-    # -- optional: mask radius (EDT on the final skeleton) --------------
-    radius_matrix = None
-    radius_stats = None
-    if config.extraction.mask_radius:
-        radius_matrix, radius_stats = compute_radii(
-            binary, skeleton, spacing=spacing, edt=edt
-        )
-
-    branch_data = summarize(graph, separator="-")
-
-    if radius_matrix is not None and not branch_data.empty:
-        per_seg = per_segment_radii(
-            radius_matrix, graph, len(branch_data), spacing=spacing
-        )
-        for key, arr in per_seg.items():
-            branch_data[key] = arr
-
-        if radius_stats is not None:
-            radius_stats.update(aggregate_segment_stats(branch_data))
-
-    if not branch_data.empty:
-        euclidean = branch_data["euclidean-distance"].to_numpy(dtype=float)
-        branch_dist = branch_data["branch-distance"].to_numpy(dtype=float)
-        tortuosity = compute_tortuosity(branch_dist, euclidean)
-        branch_data["tortuosity"] = tortuosity
-        straightness = np.full_like(branch_dist, np.nan, dtype=float)
-        valid = branch_dist > 0
-        straightness[valid] = euclidean[valid] / branch_dist[valid]
-        branch_data["straightness"] = straightness
-
-    # Box-counting fractal dimension is only valid for isotropic voxels;
-    # force it off (matching the existing "disabled" convention of
-    # returning (0.0, 0.0)) whenever spacing is both provided and
-    # anisotropic. Policy lives here, not in maskel.features, so that package
-    # stays pure/spacing-oblivious for this override.
-    include_fractal = config.extraction.fractal_dimension
-    if (
-        include_fractal
-        and spacing is not None
-        and not all(s == spacing[0] for s in spacing)
-    ):
-        if not _fractal_anisotropic_warned:
-            print(
-                "Warning: fractal_dimension is invalid for anisotropic "
-                f"spacing {spacing}; forcing it to 0.0.",
-                file=sys.stderr,
-            )
-            _fractal_anisotropic_warned = True
-        include_fractal = False
-
-    summary_features: dict[str, float] = {}
-    if config.extraction.summary:
-        summary_features = extract_summary_features(
-            skeleton,
-            graph,
-            branch_data,
-            binary=binary,
-            include_fractal=include_fractal,
-            radius_stats=radius_stats,
-            spacing=spacing,
-        )
-
-    branch_records: list[dict[str, object]] = []
-    if config.extraction.branches and not branch_data.empty:
-        branch_records = branch_data.to_dict(orient="records")
-
-    node_records: list[dict[str, object]] = []
-    if config.extraction.nodes:
-        node_records = extract_node_features(
-            graph,
-            branch_data,
-            radius_matrix=radius_matrix,
-        )
-
-    return _ObjectResult(
-        skeleton=skeleton,
-        summary_features=summary_features,
-        branch_records=branch_records,
-        node_records=node_records,
-        graph=graph,
-        branch_data=branch_data,
-        radius_matrix=radius_matrix,
-        preprocessed_binary=preprocessed_binary,
+    *,
+    dataset: str | None = None,
+    tile_shape: int | tuple[int, ...] | None = None,
+    halo: int | tuple[int, ...] = DEFAULT_HALO,
+    progress: str | bool = "off",
+    jobs: int = 1,
+) -> None:
+    """Run all three stages on *input_path*, writing both voxel lists and the features."""
+    name = Path(input_path).stem
+    voxels = run_skeletonize(
+        input_path, out_dir, config, name, dataset, tile_shape, halo, progress, jobs
     )
+    voxels = run_postprocess(voxels, out_dir, config, name)
+    run_features(voxels, out_dir, config, name)
 
 
-def analyze_segmentation_mask(
-    mask: np.ndarray, config: PipelineConfig
-) -> AnalysisResult:
-    """Run the full skeletonization + extraction pipeline for one segmentation mask.
+def run_skeletonize(
+    input_path: Path,
+    out_dir: Path,
+    config: PipelineConfig,
+    name: str,
+    dataset: str | None = None,
+    tile_shape: int | tuple[int, ...] | None = None,
+    halo: int | tuple[int, ...] = DEFAULT_HALO,
+    progress: str | bool = "off",
+    jobs: int = 1,
+) -> VoxelList:
+    """Stage 1: write and return the voxel list of the image at *input_path*."""
+    is_hdf5 = Path(input_path).suffix.lower() in HDF5_EXTENSIONS
+    with open_image(input_path, dataset) as image:
+        voxels = skeletonize(
+            image,
+            config.extraction,
+            spacing=_image_spacing(config.extraction, image.ndim),
+            tile_shape=tile_shape,
+            halo=halo,
+            progress=progress,
+            jobs=jobs,
+            source=(Path(input_path), dataset) if is_hdf5 else None,
+        )
+    voxels.attrs = {"stage": "skeletonize", "source": str(input_path)}
+    _write(voxels, out_dir, name + SKELETON_SUFFIX, config)
+    return voxels
 
-    Accepts either a plain binary segmentation mask or a multi-object
-    instance segmentation map (more than one distinct nonzero value). Each
-    object is cropped to its own (padded) bounding box and processed fully
-    independently - this is a performance optimization for binary input, and
-    is what correctly separates touching-but-distinct objects for labeled
-    input, rather than merging them into one skeleton. Every object's
-    records are tagged with the object id it came from (``1`` for a plain
-    binary mask; see ``AnalysisResult``/``ObjectResult``).
 
-    Parameters
-    ----------
-    mask : ndarray
-        Input segmentation mask. Non-zero values are treated as foreground;
-        see above for how multiple distinct nonzero values are interpreted.
-    config : PipelineConfig
-        Full pipeline configuration.
-    """
-    t0 = time.perf_counter()
+def run_postprocess(
+    voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
+) -> VoxelList:
+    """Stage 2: write and return the cleaned-up voxel list."""
+    cleaned = postprocess(voxels, config.extraction)
+    cleaned.attrs = {**voxels.attrs, "stage": "postprocess"}
+    _write(cleaned, out_dir, name + POSTPROCESSED_SUFFIX, config)
+    return cleaned
 
-    spacing = config.extraction.spacing
-    if spacing is not None and len(spacing) != mask.ndim:
+
+def run_features(
+    voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
+) -> None:
+    """Stage 3: write the feature tables and graphs of *voxels*."""
+    write_features(out_dir, name, analyze(voxels, config.extraction), config.output)
+
+
+def load_voxels(path: Path) -> tuple[VoxelList, str]:
+    """Read a voxel list and the image name it was written under."""
+    stem = Path(path).stem
+    for suffix in (POSTPROCESSED_SUFFIX, SKELETON_SUFFIX):
+        stem = stem.removesuffix(suffix)
+    return read_voxels(path), stem
+
+
+def _write(voxels: VoxelList, out_dir: Path, stem: str, config: PipelineConfig) -> None:
+    """Write *voxels* with the config that produced them."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    voxels.attrs["config"] = config.to_dict()
+    write_voxels(out_dir / f"{stem}.h5", voxels)
+
+
+def _image_spacing(extraction: ExtractionConfig, ndim: int) -> tuple[float, ...] | None:
+    """The configured spacing, or None (with a warning) if it does not fit *ndim*."""
+    spacing = extraction.spacing
+    if spacing is not None and len(spacing) != ndim:
         print(
             f"Warning: spacing {spacing} has {len(spacing)} axes but the "
-            f"input mask has {mask.ndim}; falling back to isotropic spacing "
-            "for this image.",
+            f"image has {ndim}; falling back to isotropic spacing.",
             file=sys.stderr,
         )
-        spacing = None
-
-    logger.info("Processing image of shape %s with spacing %s", mask.shape, spacing)
-
-    object_crops = _iter_object_crops(mask, pad=1 + _preprocessing_reach(config))
-    logger.info("Processing %d object(s)", len(object_crops))
-
-    if not object_crops:
-        logger.info(
-            "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
-        )
-        return AnalysisResult(
-            skeleton=np.zeros(mask.shape, dtype=np.uint8),
-            objects=[],
-        )
-
-    want_radius = config.extraction.mask_radius
-    want_preprocessed = _preprocessing_enabled(config)
-
-    full_skeleton = np.zeros(mask.shape, dtype=np.uint8)
-    full_radius = np.zeros(mask.shape, dtype=np.float64) if want_radius else None
-    # Each object's own preprocessing output is a plain 0/1 binary crop (see
-    # _analyze_single_object), so it carries no id of its own - stitching
-    # with each object's real object_id (rather than a flat np.maximum of
-    # 1s) is what lets a multi-object preprocessed mask keep its original
-    # per-object labels instead of collapsing to a binary blob. Matches
-    # _iter_object_crops' own dtype choice (the input mask's own integer
-    # dtype where possible, so ids round-trip exactly).
-    preprocessed_dtype = (
-        mask.dtype if np.issubdtype(mask.dtype, np.integer) else np.int64
-    )
-    full_preprocessed = (
-        np.zeros(mask.shape, dtype=preprocessed_dtype) if want_preprocessed else None
-    )
-
-    ndim = mask.ndim
-    objects: list[ObjectResult] = []
-
-    for object_id, bbox, crop in object_crops:
-        obj = _analyze_single_object(crop, config, spacing=spacing)
-        offset = tuple(s.start for s in bbox)
-
-        full_skeleton[bbox] = np.maximum(full_skeleton[bbox], obj.skeleton)
-        if full_radius is not None and obj.radius_matrix is not None:
-            full_radius[bbox] = np.maximum(full_radius[bbox], obj.radius_matrix)
-        if full_preprocessed is not None and obj.preprocessed_binary is not None:
-            full_preprocessed[bbox][obj.preprocessed_binary > 0] = object_id
-
-        summary_features = (
-            {**obj.summary_features, "object_id": object_id}
-            if config.extraction.summary
-            else {}
-        )
-
-        branch_records = [
-            {**record, "object_id": object_id} for record in obj.branch_records
-        ]
-
-        node_records = []
-        for record in obj.node_records:
-            record = dict(record)
-            for d in range(ndim):
-                record[f"coord_{d}"] = record[f"coord_{d}"] + offset[d]
-            record["object_id"] = object_id
-            node_records.append(record)
-
-        objects.append(
-            ObjectResult(
-                object_id=object_id,
-                offset=offset,
-                summary_features=summary_features,
-                branch_records=branch_records,
-                node_records=node_records,
-                graph=obj.graph,
-                branch_data=obj.branch_data,
-                radius_matrix=obj.radius_matrix,
-            )
-        )
-
-    logger.info(
-        "Finished image of shape %s in %.2fs", mask.shape, time.perf_counter() - t0
-    )
-
-    return AnalysisResult(
-        skeleton=full_skeleton,
-        objects=objects,
-        radius_matrix=full_radius,
-        preprocessed_binary=full_preprocessed,
-    )
+        return None
+    return spacing

@@ -1,294 +1,213 @@
-"""Tests for maskel._io."""
-
-import csv
-
+import h5py
 import numpy as np
 import pytest
-from skan import Skeleton, summarize
+import tifffile
+from PIL import Image
 
-from maskel._io import save_analysis_outputs
-from maskel.config import OutputConfig
-from maskel.pipeline import AnalysisResult, ObjectResult
+from maskel.io.images import load_image, open_image
+from maskel.io.tables import write_csv
+from maskel.io.voxels import VoxelList, read_voxels, write_voxels
 
 
-class TestSaveAnalysisOutputs:
-    """Tests for save_analysis_outputs, the top-level writer."""
+class TestLoadImage:
+    def test_load_png(self, tmp_path):
+        path = tmp_path / "test.png"
+        Image.fromarray(np.zeros((3, 3), dtype=np.uint8)).save(path)
+        arr = load_image(path)
+        assert arr.shape == (3, 3)
 
-    @staticmethod
-    def _result(
-        *,
-        summary: bool = True,
-        radius: bool = False,
-        branches: bool = False,
-        nodes: bool = False,
-    ) -> AnalysisResult:
-        skel = np.eye(10, dtype=np.uint8)
-        feat = (
-            {"n_branches": 4.0, "n_junctions": 1.0, "object_id": 1} if summary else {}
+    def test_load_jpg(self, tmp_path):
+        path = tmp_path / "test.jpg"
+        Image.fromarray(np.ones((4, 4), dtype=np.uint8) * 128).save(path)
+        arr = load_image(path)
+        assert arr.shape == (4, 4)
+
+    def test_load_npy(self, tmp_path):
+        path = tmp_path / "test.npy"
+        np.save(path, np.ones((5, 5), dtype=np.uint8))
+        arr = load_image(path)
+        assert arr.shape == (5, 5)
+
+    def test_load_rgb_collapses_to_grayscale(self, tmp_path):
+        path = tmp_path / "rgb.png"
+        rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+        rgb[2:6, 2:6, 0] = 255
+        Image.fromarray(rgb).save(path)
+        arr = load_image(path)
+        assert arr.ndim == 2
+        assert arr.shape == (8, 8)
+        assert arr[4, 4] == 255
+        assert arr[0, 0] == 0
+
+    def test_load_rgba_collapses_to_grayscale(self, tmp_path):
+        path = tmp_path / "rgba.png"
+        rgba = np.zeros((6, 6, 4), dtype=np.uint8)
+        rgba[:, :, :3] = 100
+        Image.fromarray(rgba).save(path)
+        arr = load_image(path)
+        assert arr.ndim == 2
+
+    def test_load_2d_passes_through(self, tmp_path):
+        path = tmp_path / "gray.png"
+        Image.fromarray(np.eye(10, dtype=np.uint8) * 255).save(path)
+        arr = load_image(path)
+        assert arr.ndim == 2
+
+    def test_load_3d_npy(self, tmp_path):
+        path = tmp_path / "vol.npy"
+        np.save(path, np.ones((3, 4, 5), dtype=np.uint8))
+        arr = load_image(path)
+        assert arr.shape == (3, 4, 5)
+
+    def test_load_multipage_tiff_stacks_to_3d(self, tmp_path):
+        path = tmp_path / "vol.tif"
+        vol = np.zeros((6, 4, 5), dtype=np.uint8)
+        for z in range(6):
+            vol[z, z % 4, z % 5] = 255
+        frames = [Image.fromarray(sl) for sl in vol]
+        frames[0].save(path, save_all=True, append_images=frames[1:])
+        arr = load_image(path)
+        assert arr.shape == (6, 4, 5)
+        assert np.array_equal(arr, vol)
+
+    def test_load_single_page_tiff_stays_2d(self, tmp_path):
+        path = tmp_path / "flat.tif"
+        Image.fromarray(np.eye(7, dtype=np.uint8) * 255).save(path)
+        arr = load_image(path)
+        assert arr.shape == (7, 7)
+
+    def test_load_single_page_rgb_tiff_collapses_channels(self, tmp_path):
+        path = tmp_path / "rgb.tif"
+        rgb = np.zeros((4, 5, 3), dtype=np.uint8)
+        rgb[1, 2, 0] = 200
+        Image.fromarray(rgb, mode="RGB").save(path)
+        arr = load_image(path)
+        assert arr.shape == (4, 5)
+        assert arr[1, 2] == 200
+
+    def test_load_imagej_stack_with_singleton_channel(self, tmp_path):
+        """tifffile drops a 1-length channel axis, so ZCYX arrives as 3D."""
+        path = tmp_path / "hyper.tif"
+        vol = np.zeros((4, 1, 8, 9), dtype=np.uint8)
+        vol[2, 0, 3, 4] = 255
+        tifffile.imwrite(path, vol, imagej=True, metadata={"axes": "ZCYX"})
+        arr = load_image(path)
+        assert arr.shape == (4, 8, 9)
+        assert arr[2, 3, 4] == 255
+
+    def test_load_multichannel_stack_raises(self, tmp_path):
+        path = tmp_path / "multichan.tif"
+        tifffile.imwrite(
+            path,
+            np.zeros((4, 2, 8, 9), dtype=np.uint8),
+            imagej=True,
+            metadata={"axes": "ZCYX"},
         )
-        rad = np.ones((10, 10), dtype=np.float64) if radius else None
-        brecs = (
-            [{"id": i, "len": float(i * 2), "object_id": 1} for i in range(2)]
-            if branches
-            else []
+        with pytest.raises(
+            ValueError, match=r"Expected 2D or 3D image, got shape=\(4, 2, 8, 9\)"
+        ):
+            load_image(path)
+
+    def test_load_multipage_rgb_tiff_raises(self, tmp_path):
+        """A colour stack stays 4D: channels are only collapsed for 2D pages."""
+        path = tmp_path / "rgb_vol.tif"
+        vol = np.zeros((3, 4, 5, 3), dtype=np.uint8)
+        frames = [Image.fromarray(sl, mode="RGB") for sl in vol]
+        frames[0].save(path, save_all=True, append_images=frames[1:])
+        with pytest.raises(ValueError, match=r"Expected 2D or 3D image"):
+            load_image(path)
+
+    def test_load_compressed_tiff_stack(self, tmp_path):
+        """Compressed multi-page stack; uses a stdlib codec available on 3.13."""
+        path = tmp_path / "lzma_vol.tif"
+        vol = (np.arange(3 * 4 * 5, dtype=np.uint8) % 2 * 255).reshape(3, 4, 5)
+        tifffile.imwrite(path, vol, compression="lzma", photometric="minisblack")
+        arr = load_image(path)
+        assert arr.shape == (3, 4, 5)
+        assert np.array_equal(arr, vol)
+
+    def test_load_tiff_does_not_use_pillow(self, tmp_path, monkeypatch):
+        """Guard the regression: Pillow's reader hands back page 0 only."""
+        path = tmp_path / "vol.tif"
+        tifffile.imwrite(path, np.zeros((7, 4, 5), dtype=np.uint8))
+        monkeypatch.setattr(
+            "maskel.io.images.Image.open",
+            lambda *a, **k: pytest.fail("TIFF must not be read through Pillow"),
         )
-        nrecs = (
-            [{"id": i, "deg": i + 2, "object_id": 1} for i in range(2)] if nodes else []
-        )
-        return AnalysisResult(
-            skeleton=skel,
-            objects=[
-                ObjectResult(
-                    object_id=1,
-                    offset=(0, 0),
-                    summary_features=feat,
-                    branch_records=brecs,
-                    node_records=nrecs,
-                )
-            ],
-            radius_matrix=rad,
-        )
+        assert load_image(path).shape == (7, 4, 5)
 
-    # -- skeleton output ---------------------------------------------------
 
-    def test_default_skeleton_npy_and_summary(self, tmp_path):
-        save_analysis_outputs(tmp_path, "img", self._result(), OutputConfig())
-        d = tmp_path / "img"
-        assert d.is_dir()
-        assert (d / "img_skeleton.npy").exists()
-        assert (d / "img_summary.csv").exists()
-        assert not (d / "img_skeleton.png").exists()
+class TestOpenImage:
+    def _h5(self, path, **datasets):
+        with h5py.File(path, "w") as f:
+            for name, data in datasets.items():
+                f.create_dataset(name, data=data, chunks=True, compression="gzip")
+        return path
 
-    def test_skeleton_png_only(self, tmp_path):
-        cfg = OutputConfig(write_skeleton_npy=False, write_skeleton_png=True)
-        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        d = tmp_path / "img"
-        assert (d / "img_skeleton.png").exists()
-        assert not (d / "img_skeleton.npy").exists()
+    def test_hdf5_is_read_lazily(self, tmp_path):
+        path = self._h5(tmp_path / "a.h5", mask=np.ones((6, 7), np.uint8))
+        with open_image(path) as image:
+            assert isinstance(image, h5py.Dataset)
+            assert image[1:3, 2:5].shape == (2, 3)
 
-    def test_skeleton_both_formats(self, tmp_path):
-        cfg = OutputConfig(write_skeleton_npy=True, write_skeleton_png=True)
-        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        d = tmp_path / "img"
-        assert (d / "img_skeleton.npy").exists()
-        assert (d / "img_skeleton.png").exists()
+    def test_named_dataset_among_several(self, tmp_path):
+        path = self._h5(tmp_path / "a.h5", a=np.zeros((4, 4)), b=np.ones((5, 5)))
+        with open_image(path, "b") as image:
+            assert image.shape == (5, 5)
 
-    def test_skeleton_neither_format(self, tmp_path):
-        cfg = OutputConfig(write_skeleton_npy=False, write_skeleton_png=False)
-        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        d = tmp_path / "img"
-        assert not (d / "img_skeleton.npy").exists()
-        assert not (d / "img_skeleton.png").exists()
+    def test_ambiguous_datasets_need_a_name(self, tmp_path):
+        path = self._h5(tmp_path / "a.h5", a=np.zeros((4, 4)), b=np.ones((5, 5)))
+        with pytest.raises(ValueError, match="exactly one"), open_image(path):
+            pass
 
-    def test_3d_skeleton_with_png_warns_and_skips(self, tmp_path, capsys):
-        result = AnalysisResult(
-            skeleton=np.ones((4, 4, 4), dtype=np.uint8),
-            objects=[],
-        )
-        cfg = OutputConfig(write_skeleton_npy=True, write_skeleton_png=True)
-        save_analysis_outputs(tmp_path, "vol", result, cfg)
-        d = tmp_path / "vol"
-        assert not (d / "vol_skeleton.png").exists()
-        assert (d / "vol_skeleton.npy").exists()
-        assert "2D" in capsys.readouterr().err
+    def test_other_formats_are_loaded_whole(self, tmp_path):
+        np.save(tmp_path / "a.npy", np.ones((3, 4), np.uint8))
+        with open_image(tmp_path / "a.npy") as image:
+            assert isinstance(image, np.ndarray)
 
-    # -- branch CSV --------------------------------------------------------
 
-    def test_saves_branch_csv(self, tmp_path):
-        cfg = OutputConfig(write_branch_csv=True)
-        save_analysis_outputs(tmp_path, "img", self._result(branches=True), cfg)
-        with open(tmp_path / "img" / "img_branches.csv") as f:
-            rows = list(csv.DictReader(f))
-        assert len(rows) == 2
-        assert rows[0]["id"] == "0"
-
-    def test_skips_branch_csv_when_no_records(self, tmp_path):
-        cfg = OutputConfig(write_branch_csv=True)
-        save_analysis_outputs(tmp_path, "img", self._result(branches=False), cfg)
-        assert not (tmp_path / "img" / "img_branches.csv").exists()
-
-    def test_skips_branch_csv_when_disabled(self, tmp_path):
-        cfg = OutputConfig(write_branch_csv=False)
-        save_analysis_outputs(tmp_path, "img", self._result(branches=True), cfg)
-        assert not (tmp_path / "img" / "img_branches.csv").exists()
-
-    # -- node CSV ----------------------------------------------------------
-
-    def test_saves_node_csv(self, tmp_path):
-        cfg = OutputConfig(write_node_csv=True)
-        save_analysis_outputs(tmp_path, "img", self._result(nodes=True), cfg)
-        with open(tmp_path / "img" / "img_nodes.csv") as f:
-            rows = list(csv.DictReader(f))
-        assert len(rows) == 2
-        assert rows[0]["deg"] == "2"
-
-    def test_skips_node_csv_when_no_records(self, tmp_path):
-        cfg = OutputConfig(write_node_csv=True)
-        save_analysis_outputs(tmp_path, "img", self._result(nodes=False), cfg)
-        assert not (tmp_path / "img" / "img_nodes.csv").exists()
-
-    def test_skips_node_csv_when_disabled(self, tmp_path):
-        cfg = OutputConfig(write_node_csv=False)
-        save_analysis_outputs(tmp_path, "img", self._result(nodes=True), cfg)
-        assert not (tmp_path / "img" / "img_nodes.csv").exists()
-
-    # -- radius ------------------------------------------------------------
-
-    def test_saves_radius(self, tmp_path):
-        cfg = OutputConfig(write_radius=True)
-        save_analysis_outputs(tmp_path, "img", self._result(radius=True), cfg)
-        path = tmp_path / "img" / "img_radius.npy"
-        assert path.exists()
-        assert np.load(path).dtype == np.float64
-
-    def test_skips_radius_when_none(self, tmp_path):
-        cfg = OutputConfig(write_radius=True)
-        save_analysis_outputs(tmp_path, "img", self._result(radius=False), cfg)
-        assert not (tmp_path / "img" / "img_radius.npy").exists()
-
-    def test_skips_radius_when_disabled(self, tmp_path):
-        cfg = OutputConfig(write_radius=False)
-        save_analysis_outputs(tmp_path, "img", self._result(radius=True), cfg)
-        assert not (tmp_path / "img" / "img_radius.npy").exists()
-
-    # -- summary CSV -------------------------------------------------------
-
-    def test_summary_csv_content(self, tmp_path):
-        save_analysis_outputs(
-            tmp_path, "img", self._result(summary=True), OutputConfig()
-        )
-        with open(tmp_path / "img" / "img_summary.csv") as f:
-            rows = list(csv.DictReader(f))
-        assert len(rows) == 1
-        assert rows[0]["image"] == "img"
-        assert rows[0]["n_branches"] == "4.0"
-        assert rows[0]["object_id"] == "1"
-
-    def test_skips_summary_when_empty_features(self, tmp_path):
-        save_analysis_outputs(
-            tmp_path, "img", self._result(summary=False), OutputConfig()
-        )
-        assert not (tmp_path / "img" / "img_summary.csv").exists()
-
-    def test_skips_summary_when_write_summary_false(self, tmp_path):
-        save_analysis_outputs(
-            tmp_path,
-            "img",
-            self._result(summary=True),
-            OutputConfig(),
-            write_summary=False,
-        )
-        assert not (tmp_path / "img" / "img_summary.csv").exists()
-
-    def test_skips_summary_when_config_disabled(self, tmp_path):
-        cfg = OutputConfig(write_summary_csv=False)
-        save_analysis_outputs(tmp_path, "img", self._result(summary=True), cfg)
-        assert not (tmp_path / "img" / "img_summary.csv").exists()
-
-    # -- all outputs -------------------------------------------------------
-
-    def test_all_outputs_enabled(self, tmp_path):
-        result = self._result(summary=True, radius=True, branches=True, nodes=True)
-        cfg = OutputConfig(
-            write_skeleton_npy=True,
-            write_skeleton_png=True,
-            write_branch_csv=True,
-            write_node_csv=True,
-            write_radius=True,
-            write_summary_csv=True,
-        )
-        save_analysis_outputs(tmp_path, "img", result, cfg)
-        d = tmp_path / "img"
-        assert (d / "img_skeleton.npy").exists()
-        assert (d / "img_skeleton.png").exists()
-        assert (d / "img_branches.csv").exists()
-        assert (d / "img_nodes.csv").exists()
-        assert (d / "img_radius.npy").exists()
-        assert (d / "img_summary.csv").exists()
-
-    def test_nothing_enabled_creates_empty_dir(self, tmp_path):
-        cfg = OutputConfig(
-            write_skeleton_npy=False,
-            write_skeleton_png=False,
-            write_branch_csv=False,
-            write_node_csv=False,
-            write_radius=False,
-            write_summary_csv=False,
-        )
-        save_analysis_outputs(tmp_path, "img", self._result(summary=True), cfg)
-        d = tmp_path / "img"
-        assert d.is_dir()
-        assert list(d.iterdir()) == []
-
-    # -- edge cases --------------------------------------------------------
-
-    def test_existing_dir_is_reused(self, tmp_path):
-        d = tmp_path / "img"
-        d.mkdir()
-        (d / "stale.txt").touch()
-        save_analysis_outputs(tmp_path, "img", self._result(), OutputConfig())
-        assert (d / "stale.txt").exists()
-        assert (d / "img_skeleton.npy").exists()
-
-    def test_base_name_with_spaces(self, tmp_path):
-        save_analysis_outputs(tmp_path, "my img", self._result(), OutputConfig())
-        d = tmp_path / "my img"
-        assert d.is_dir()
-        assert (d / "my img_skeleton.npy").exists()
-
-    # -- graphml -----------------------------------------------------------
-
-    @pytest.fixture
-    def graph_result(self, cross_skel) -> AnalysisResult:
-        graph = Skeleton(cross_skel)
-        branch_data = summarize(graph, separator="-")
-        return AnalysisResult(
-            skeleton=cross_skel,
-            objects=[
-                ObjectResult(
-                    object_id=1,
-                    offset=(0, 0),
-                    summary_features={
-                        "num_nodes": float(len(branch_data)),
-                        "object_id": 1,
-                    },
-                    branch_records=[],
-                    node_records=[],
-                    graph=graph,
-                    branch_data=branch_data,
-                )
-            ],
-            radius_matrix=np.ones_like(cross_skel, dtype=np.float64) * 2.0,
+class TestVoxels:
+    def _voxels(self):
+        return VoxelList(
+            shape=(10, 10),
+            spacing=(2.0, 0.5),
+            coords=np.array([[5, 5], [1, 2], [1, 1]]),
+            radius=np.array([3.0, 2.0, 1.0]),
+            label=np.array([4, 7, 4]),
+            labels=np.array([4, 7]),
+            mask_voxels=np.array([20, 30]),
+            crop_voxels=np.array([50, 60]),
+            attrs={"stage": "skeletonize"},
         )
 
-    def test_saves_graphml(self, tmp_path, graph_result):
-        cfg = OutputConfig(write_graphml=True)
-        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert (tmp_path / "img" / "img_1_graph.graphml").exists()
+    def test_sorted_by_label_then_position(self):
+        voxels = self._voxels()
+        np.testing.assert_array_equal(voxels.coords, [[1, 1], [5, 5], [1, 2]])
+        np.testing.assert_array_equal(voxels.radius, [1.0, 3.0, 2.0])
 
-    def test_skips_graphml_when_disabled(self, tmp_path, graph_result):
-        cfg = OutputConfig(write_graphml=False)
-        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()
+    def test_iterates_per_label(self):
+        parts = list(self._voxels())
+        assert [p.label for p in parts] == [4, 7]
+        assert [len(p.coords) for p in parts] == [2, 1]
+        assert parts[1].mask_voxels == 30
 
-    def test_skips_graphml_when_graph_missing(self, tmp_path):
-        cfg = OutputConfig(write_graphml=True)
-        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        assert not (tmp_path / "img" / "img_1_graph.graphml").exists()
+    def test_round_trip(self, tmp_path):
+        voxels = self._voxels()
+        write_voxels(tmp_path / "v.h5", voxels)
+        loaded = read_voxels(tmp_path / "v.h5")
+        np.testing.assert_array_equal(loaded.coords, voxels.coords)
+        np.testing.assert_array_equal(loaded.radius, voxels.radius)
+        np.testing.assert_array_equal(loaded.crop_voxels, voxels.crop_voxels)
+        assert loaded.shape == (10, 10)
+        assert loaded.spacing == (2.0, 0.5)
+        assert loaded.attrs == {"stage": "skeletonize"}
 
-    # -- networkx pickle -----------------------------------------------------
 
-    def test_saves_networkx_pickle(self, tmp_path, graph_result):
-        cfg = OutputConfig(write_networkx_graph=True)
-        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert (tmp_path / "img" / "img_1_graph.pkl").exists()
+class TestWriteCsv:
+    def test_union_of_keys_as_sorted_columns(self, tmp_path):
+        write_csv(tmp_path / "a.csv", [{"b": np.int64(1)}, {"a": 2.5}])
+        assert (tmp_path / "a.csv").read_text().splitlines() == ["a,b", ",1", "2.5,"]
 
-    def test_skips_networkx_pickle_when_disabled(self, tmp_path, graph_result):
-        cfg = OutputConfig(write_networkx_graph=False)
-        save_analysis_outputs(tmp_path, "img", graph_result, cfg)
-        assert not (tmp_path / "img" / "img_1_graph.pkl").exists()
-
-    def test_skips_networkx_pickle_when_graph_missing(self, tmp_path):
-        cfg = OutputConfig(write_networkx_graph=True)
-        save_analysis_outputs(tmp_path, "img", self._result(), cfg)
-        assert not (tmp_path / "img" / "img_1_graph.pkl").exists()
+    def test_empty_rows_write_nothing(self, tmp_path):
+        write_csv(tmp_path / "a.csv", [])
+        assert not (tmp_path / "a.csv").exists()

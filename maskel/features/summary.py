@@ -3,9 +3,6 @@
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from skan import Skeleton
-
-from maskel.features.fractal import fractal_dimension
 
 
 def compute_tortuosity(lengths: np.ndarray, euclidean: np.ndarray) -> np.ndarray:
@@ -67,59 +64,23 @@ _RADIUS_STATS_DEFAULTS: dict[str, float] = {
 
 
 def extract_summary_features(
-    skeleton: np.ndarray,
-    graph: Skeleton,
     branch_data,
     *,
-    binary: np.ndarray,
-    include_fractal: bool = True,
+    mask_voxels: int,
+    crop_voxels: int,
+    fractal: tuple[float, float] = (0.0, 0.0),
     radius_stats: dict[str, float] | None = None,
     spacing: tuple[float, ...] | None = None,
 ) -> dict[str, float]:
-    """Extract graph-topology and segment statistics from a skeleton.
-
-    Parameters
-    ----------
-    skeleton : ndarray
-        Binary 2D or 3D skeleton array. Used only for fractal dimension
-        computation, not for graph topology.
-    graph : Skeleton
-        Pre-built skan Skeleton graph (e.g. from `build_skeleton_graph`).
-    branch_data : DataFrame
-        Pre-computed branch summary (e.g. from `skan.summarize(graph, ...)`).
-    binary : ndarray
-        Original binary mask. Used to compute ``mask_area`` and
-        ``mask_area_fraction``.
-    include_fractal : bool, optional
-        Whether to compute fractal dimension (expensive-ish). Default is True.
-    radius_stats : dict[str, float], optional
-        Pre-computed radius/diameter statistics from `compute_radii`
-        (``mean_radius``, ``std_radius``, ``min_radius``, ``max_radius``,
-        ``mean_diameter``, ``std_diameter``, ``min_diameter``,
-        ``max_diameter``). Note ``compute_radii`` alone does *not* produce
-        ``mean_segment_volume``/``mean_surface_area`` - those are
-        branch-level aggregates from `aggregate_segment_stats`, which needs
-        `per_segment_radii`'s output merged into *branch_data* first. Any
-        key missing from *radius_stats* (including both of those, if you
-        only ran `compute_radii`) defaults to ``0.0`` rather than being
-        silently dropped from the returned dict - the schema is always the
-        same 10 keys regardless of what *radius_stats* actually supplies.
-        ``None`` defaults every one of them to ``0.0``.
-    spacing : tuple[float, ...], optional
-        Per-axis physical size of one pixel/voxel. When given, scales
-        ``mask_area`` from a raw pixel/voxel count into physical units
-        (``mask_area_fraction`` needs no change since it's a ratio and
-        the scaling cancels). ``None`` (the default) keeps pixel units.
-    """
+    """Topology, length, tortuosity, mask and radius statistics of one label's branch table."""
     if branch_data.empty:
         return dict(_EMPTY_FEATURES)
 
-    mask_area = float(np.count_nonzero(binary))
+    mask_area = float(mask_voxels)
     if spacing is not None:
         mask_area *= float(np.prod(spacing))
-    mask_area_fraction = float(np.count_nonzero(binary)) / float(binary.size)
-
-    fd, fd_r2 = fractal_dimension(skeleton) if include_fractal else (0.0, 0.0)
+    mask_area_fraction = float(mask_voxels) / float(crop_voxels)
+    fd, fd_r2 = fractal
 
     src_nodes = branch_data["node-id-src"].to_numpy(dtype=np.int64)
     dst_nodes = branch_data["node-id-dst"].to_numpy(dtype=np.int64)

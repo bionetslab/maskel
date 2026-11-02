@@ -5,10 +5,8 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Iterable
-from math import prod
 
-from maskel.tiling.grid import TileGrid, TileSpec
+from maskel.tiling import Tile, TileGrid
 
 PROGRESS_STYLES = ("off", "auto", "bar", "lines")
 PROGRESS_ENV_VAR = "MASKEL_PROGRESS"
@@ -75,12 +73,9 @@ class ProgressReporter:
     def __init__(self, label: str, grid: TileGrid, progress: str | bool) -> None:
         self.label = label
         self.total_items = len(grid)
-        self.total_units = max(grid.read_total, 1)
+        self.total_units = max(sum(tile.read_size for tile in grid), 1)
         self.done_items = 0
         self.done_units = 0
-        # Voxels this run thinned itself. Resumed tiles fill the bar but are
-        # left out of the rate, which would otherwise look infinitely fast.
-        self.measured_units = 0
         self.start = time.monotonic()
         self.stream = sys.stdout
         self.style = resolve_progress_style(progress, self.stream)
@@ -91,22 +86,11 @@ class ProgressReporter:
         if self.enabled:
             self._paint()
 
-    def advance(self, spec: TileSpec) -> None:
-        """Count one tile this run thinned."""
+    def advance(self, tile: Tile) -> None:
+        """Count one finished tile."""
         self.done_items += 1
-        self.done_units += prod(spec.read_shape)
-        self.measured_units += prod(spec.read_shape)
+        self.done_units += tile.read_size
         if self.enabled:
-            self._paint()
-
-    def skip(self, specs: Iterable[TileSpec]) -> None:
-        """Count tiles a previous run finished, without timing them."""
-        skipped = 0
-        for spec in specs:
-            self.done_items += 1
-            self.done_units += prod(spec.read_shape)
-            skipped += 1
-        if skipped and self.enabled:
             self._paint()
 
     def done(self) -> None:
@@ -124,8 +108,8 @@ class ProgressReporter:
         elapsed = time.monotonic() - self.start
         remaining = self.total_units - self.done_units
         eta = (
-            format_duration(elapsed / self.measured_units * remaining)
-            if self.measured_units
+            format_duration(elapsed / self.done_units * remaining)
+            if self.done_units
             else "?"
         )
         filled = int(_BAR_WIDTH * fraction)
