@@ -8,7 +8,7 @@ import numpy as np
 from scipy import ndimage as ndi
 
 from maskel._utils import _label_compact
-from maskel.config import ExtractionConfig
+from maskel.config import PreprocessingConfig
 
 
 def preprocess_binary(
@@ -96,17 +96,19 @@ def preprocessing_enabled(
     return opening_radius > 0 or closing_iterations > 0 or fill_holes
 
 
-def crop_pad(extraction: ExtractionConfig) -> int:
+def crop_pad(preprocessing: PreprocessingConfig) -> int:
     """Background voxels kept around each label's bounding box: 1 plus the ball steps' reach."""
-    return 1 + 2 * extraction.opening_radius + 2 * extraction.closing_iterations
+    return 1 + 2 * preprocessing.opening_radius + 2 * preprocessing.closing_iterations
 
 
 def preprocessing_margin(
-    extraction: ExtractionConfig, spacing: tuple[float, ...] | None, ndim: int
+    preprocessing: PreprocessingConfig, spacing: tuple[float, ...] | None, ndim: int
 ) -> tuple[int, ...]:
     """Voxels per axis by which preprocessing near a block edge can differ from the whole image."""
     step = (1.0,) * ndim if spacing is None else spacing
-    ball = 2 * extraction.opening_radius + 2 * extraction.closing_iterations
-    if not (extraction.fill_holes and extraction.max_hole_diameter > 0):
+    ball = 2 * preprocessing.opening_radius + 2 * preprocessing.closing_iterations
+    if not (preprocessing.fill_holes and preprocessing.max_hole_diameter > 0):
         return (ball,) * ndim
-    return tuple(ball + math.ceil(extraction.max_hole_diameter / s) + 1 for s in step)
+    return tuple(
+        ball + math.ceil(preprocessing.max_hole_diameter / s) + 1 for s in step
+    )

@@ -6,12 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from maskel.config import (
-    ExtractionConfig,
-    OutputConfig,
-    PipelineConfig,
-    load_pipeline_config,
-)
+from maskel.config import PipelineConfig, load_pipeline_config
 
 
 def add_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -37,12 +32,8 @@ def add_parsers(subparsers: argparse._SubParsersAction) -> None:
 def config_init(args: argparse.Namespace) -> int:
     path = Path(args.out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    config = PipelineConfig(
-        extraction=ExtractionConfig(),
-        output=OutputConfig(),
-    )
     with path.open("w") as f:
-        json.dump(config.to_dict(), f, indent=2)
+        json.dump(PipelineConfig().to_dict(), f, indent=2)
     print(f"Wrote starter config to '{path}'.")
     return 0
 

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-from maskel.config import ExtractionConfig, PipelineConfig
+from maskel.config import PipelineConfig
 from maskel.features import analyze
 from maskel.io.images import HDF5_EXTENSIONS, open_image
 from maskel.io.tables import write_features
-from maskel.io.voxels import VoxelList, read_voxels, write_voxels
+from maskel.io.voxels import (
+    VoxelList,
+    read_voxels,
+    write_skeleton_mask,
+    write_voxels,
+)
 from maskel.postprocessing import postprocess
 from maskel.skeletonize import skeletonize
 from maskel.tiling import DEFAULT_HALO
@@ -32,7 +36,15 @@ def run(
     """Run all three stages on *input_path*, writing both voxel lists and the features."""
     name = Path(input_path).stem
     voxels = run_skeletonize(
-        input_path, out_dir, config, name, dataset, tile_shape, halo, progress, jobs
+        input_path,
+        out_dir,
+        config,
+        name,
+        dataset=dataset,
+        tile_shape=tile_shape,
+        halo=halo,
+        progress=progress,
+        jobs=jobs,
     )
     voxels = run_postprocess(voxels, out_dir, config, name)
     run_features(voxels, out_dir, config, name)
@@ -43,6 +55,7 @@ def run_skeletonize(
     out_dir: Path,
     config: PipelineConfig,
     name: str,
+    *,
     dataset: str | None = None,
     tile_shape: int | tuple[int, ...] | None = None,
     halo: int | tuple[int, ...] = DEFAULT_HALO,
@@ -50,12 +63,17 @@ def run_skeletonize(
     jobs: int = 1,
 ) -> VoxelList:
     """Stage 1: write and return the voxel list of the image at *input_path*."""
+    spacing = config.spacing
     is_hdf5 = Path(input_path).suffix.lower() in HDF5_EXTENSIONS
     with open_image(input_path, dataset) as image:
+        if spacing is not None and len(spacing) != image.ndim:
+            raise ValueError(
+                f"Spacing {spacing} has {len(spacing)} axes but the image has {image.ndim}."
+            )
         voxels = skeletonize(
             image,
-            config.extraction,
-            spacing=_image_spacing(config.extraction, image.ndim),
+            config.preprocessing,
+            spacing=spacing,
             tile_shape=tile_shape,
             halo=halo,
             progress=progress,
@@ -71,7 +89,7 @@ def run_postprocess(
     voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
 ) -> VoxelList:
     """Stage 2: write and return the cleaned-up voxel list."""
-    cleaned = postprocess(voxels, config.extraction)
+    cleaned = postprocess(voxels, config.postprocessing)
     cleaned.attrs = {**voxels.attrs, "stage": "postprocess"}
     _write(cleaned, out_dir, name + POSTPROCESSED_SUFFIX, config)
     return cleaned
@@ -81,7 +99,8 @@ def run_features(
     voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
 ) -> None:
     """Stage 3: write the feature tables and graphs of *voxels*."""
-    write_features(out_dir, name, analyze(voxels, config.extraction), config.output)
+    features = analyze(voxels, config.feature_extraction)
+    write_features(out_dir, name, features, config.output)
 
 
 def load_voxels(path: Path) -> tuple[VoxelList, str]:
@@ -93,20 +112,9 @@ def load_voxels(path: Path) -> tuple[VoxelList, str]:
 
 
 def _write(voxels: VoxelList, out_dir: Path, stem: str, config: PipelineConfig) -> None:
-    """Write *voxels* with the config that produced them."""
+    """Write *voxels* with the config that produced them, plus their skeleton mask if configured."""
     out_dir.mkdir(parents=True, exist_ok=True)
     voxels.attrs["config"] = config.to_dict()
     write_voxels(out_dir / f"{stem}.h5", voxels)
-
-
-def _image_spacing(extraction: ExtractionConfig, ndim: int) -> tuple[float, ...] | None:
-    """The configured spacing, or None (with a warning) if it does not fit *ndim*."""
-    spacing = extraction.spacing
-    if spacing is not None and len(spacing) != ndim:
-        print(
-            f"Warning: spacing {spacing} has {len(spacing)} axes but the "
-            f"image has {ndim}; falling back to isotropic spacing.",
-            file=sys.stderr,
-        )
-        return None
-    return spacing
+    if config.output.write_skeleton_mask:
+        write_skeleton_mask(out_dir / f"{stem}_mask.h5", voxels)

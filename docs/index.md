@@ -38,8 +38,8 @@ Every branch, node, and summary row is tagged with the `object_id` it came from,
 
 ## General usage of the CLI
 
-1. Create a starter config: `maskel init config.json` (or export one from napari-maskel's **Save recipe** button — see [Sharing a config with napari-maskel](#sharing-a-config-with-napari-maskel)).
-2. Edit `config.json` to set the extraction/output parameters described below.
+1. Create a starter config: `maskel init config.json`.
+2. Edit `config.json` to set the parameters described below.
 3. Check it's well-formed: `maskel validate config.json` — prints the normalized config and confirms its `schema_version` is supported.
 4. Run it:
 
@@ -75,57 +75,62 @@ A voxel list is an HDF5 file with the datasets `coords` (global voxel indices), 
 
 `--out` is a directory that ends up containing the voxel lists and whichever files are enabled under `output` (summary/branch/node CSVs, GraphML/pickle graphs — see Configurable parameters below for exact filenames).
 
-### Spacing override
-
-`--spacing` overrides `extraction.spacing` in the config, e.g. `--spacing 2.0 2.0` for 2D or `--spacing 1.0 0.5 0.5` for 3D. An image whose dimensionality doesn't match falls back to isotropic spacing with a warning.
-
 ## Configurable parameters
 
-A config JSON has two sections, `extraction` and `output` (plus a `schema_version` — currently 7 — that must match exactly), matching `maskel.config.ExtractionConfig`/`OutputConfig`. It's the same JSON produced by `maskel init`, consumed by `maskel run --config`, and exported/imported by napari-maskel's **Save recipe**/**Load recipe**.
+A config JSON has a `schema_version` (currently 8, must match exactly), a top-level `spacing`, and one block per stage plus the outputs: `preprocessing`, `postprocessing`, `feature_extraction` and `output`, matching `maskel.config.PipelineConfig` and its `PreprocessingConfig`/`PostprocessingConfig`/`FeatureConfig`/`OutputConfig`. It's the JSON produced by `maskel init` and consumed by `maskel run --config`. Configs of an older schema version are rejected; create a new one with `maskel init`.
+
+```json
+{
+  "schema_version": 8,
+  "spacing": null,
+  "preprocessing": {"opening_radius": 0, "closing_iterations": 0, "fill_holes": false, "max_hole_diameter": 0.0},
+  "postprocessing": {"junction_cleanup": false, "cleanup_threshold_factor": 2.5, "prune_spurs": false, "min_spur_length": 10.0, "spur_iterations": 1},
+  "feature_extraction": {"summary": true, "branches": false, "nodes": false, "fractal_dimension": false, "radius_features": false},
+  "output": {"write_summary_csv": true, "write_branch_csv": false, "write_node_csv": false, "write_graphml": false, "write_networkx_graph": false, "write_skeleton_mask": false}
+}
+```
 
 ### Physical spacing
 
-- `extraction.spacing` (list[float] or `null`, default `null`) — per-axis physical pixel/voxel size (length must match the image's dimensionality: 2 for 2D, 3 for 3D). When set, length/radius/area/volume features come out in physical units instead of pixel units. A mismatch falls back to `null` (isotropic pixel units) with a warning. Box-counting `fractal_dimension` is only valid for isotropic voxels, so it's forced to `0.0` (with a warning) whenever spacing is set and anisotropic. Overridable per-run with `maskel run --spacing`.
+- `spacing` (list[float] or `null`, default `null`) — per-axis physical pixel/voxel size (length must match the image's dimensionality: 2 for 2D, 3 for 3D; a mismatch is an error). When set, length/radius/area/volume features come out in physical units instead of pixel units. Box-counting `fractal_dimension` is only valid for isotropic voxels, so it's forced to `0.0` (with a warning) whenever spacing is set and anisotropic.
 
-### Extraction layers
+### Preprocessing
 
-- `extraction.branches` (bool, default `false`) — extract per-branch features, written to `<image>_branches.csv` when `output.write_branch_csv` is also on.
-- `extraction.branch_color_property` (str, default `"tortuosity"`) — which branch property napari-maskel colors its branches layer by. No effect on the CLI's own output; only relevant when the config is shared with the plugin.
-- `extraction.branch_text` (bool, default `false`) — whether napari-maskel overlays branch ID/length/tortuosity text on its branches layer. Likewise CLI-inert.
-- `extraction.nodes` (bool, default `false`) — extract per-node features, written to `<image>_nodes.csv` when `output.write_node_csv` is also on.
-- `extraction.summary` (bool, default `true`) — compute per-object summary features, written to `<image>_summary.csv` when `output.write_summary_csv` is also on.
+- `preprocessing.fill_holes` (bool, default `false`) — fill holes in the binary segmentation before thinning.
+- `preprocessing.max_hole_diameter` (float, default `0`) — when `fill_holes` is true, only holes that fit in a box of this size per side are filled (in physical units once `spacing` is set, pixels otherwise); `0` fills all holes, which only works without tiling.
+- `preprocessing.opening_radius` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological opening before thinning; `0` disables it. Removes thin bridges, flaps and specks the ball doesn't fit into. Runs before the closing. Same border handling as the closing.
+- `preprocessing.closing_iterations` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological closing before thinning; `0` disables it. Away from the array border this gives the same result as `skimage.morphology.closing(mask, ball(r))`. At the border, the edge voxels are repeated outward first, so objects touching it are neither eroded nor treated as ending there (skimage instead treats the outside as foreground, which also fills background strips narrower than the radius along the border). (The key keeps its old name for config compatibility; radius 1 equals one iteration of the old cross-shaped closing.)
 
-### Cleanup
+### Postprocessing
 
-- `extraction.fill_holes` (bool, default `false`) — fill holes in the binary segmentation before thinning.
-- `extraction.max_hole_diameter` (float, default `0`) — when `fill_holes` is true, only holes that fit in a box of this size per side are filled (in physical units once `spacing` is set, pixels otherwise); `0` fills all holes, which only works without tiling.
-- `extraction.opening_radius` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological opening before thinning; `0` disables it. Removes thin bridges, flaps and specks the ball doesn't fit into. Runs before the closing. Same border handling as the closing.
-- `extraction.closing_iterations` (int, default `0`) — radius in voxels of the ball (3D) / disk (2D) used for a morphological closing before thinning; `0` disables it. Away from the array border this gives the same result as `skimage.morphology.closing(mask, ball(r))`. At the border, the edge voxels are repeated outward first, so objects touching it are neither eroded nor treated as ending there (skimage instead treats the outside as foreground, which also fills background strips narrower than the radius along the border). (The key keeps its old name for config compatibility; radius 1 equals one iteration of the old cross-shaped closing.)
-- `extraction.show_preprocessed` (bool, default `false`) — whether napari-maskel adds a layer showing the mask after preprocessing. Purely a display toggle for the plugin; the CLI has no output file for the preprocessed mask.
-- `extraction.junction_cleanup` (bool, default `false`) — clean up ambiguous junction pixel clusters left behind by thinning.
-- `extraction.cleanup_threshold_factor` (float, default `2.5`) — sensitivity for the above; higher values collapse larger clusters.
-- `extraction.prune_spurs` (bool, default `false`) — remove short endpoint-to-junction branches that are thinning artifacts rather than real structure.
-- `extraction.min_spur_length` (float, default `10.0`) — branches shorter than this qualify as spurs; in pixel units, or physical units once `spacing` is set.
-- `extraction.spur_iterations` (int, default `1`) — how many times pruning repeats on its own output, since removing one spur can expose another.
+- `postprocessing.junction_cleanup` (bool, default `false`) — clean up ambiguous junction pixel clusters left behind by thinning.
+- `postprocessing.cleanup_threshold_factor` (float, default `2.5`) — sensitivity for the above; higher values collapse larger clusters.
+- `postprocessing.prune_spurs` (bool, default `false`) — remove short endpoint-to-junction branches that are thinning artifacts rather than real structure.
+- `postprocessing.min_spur_length` (float, default `10.0`) — branches shorter than this qualify as spurs; in pixel units, or physical units once `spacing` is set.
+- `postprocessing.spur_iterations` (int, default `1`) — how many times pruning repeats on its own output, since removing one spur can expose another.
 
-### Advanced features
+### Feature extraction
 
-- `extraction.fractal_dimension` (bool, default `false`) — compute the skeleton's box-counting fractal dimension as a summary feature (see [Glossary](glossary.md)). Forced to `0.0` whenever `spacing` is set and anisotropic.
-- `extraction.mask_radius` (bool, default `false`) — report the local radius (distance from each skeleton voxel to the nearest background voxel). Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node).
+- `feature_extraction.summary` (bool, default `true`) — compute per-object summary features, written to `<image>_summary.csv` when `output.write_summary_csv` is also on.
+- `feature_extraction.branches` (bool, default `false`) — extract per-branch features, written to `<image>_branches.csv` when `output.write_branch_csv` is also on.
+- `feature_extraction.nodes` (bool, default `false`) — extract per-node features, written to `<image>_nodes.csv` when `output.write_node_csv` is also on.
+- `feature_extraction.fractal_dimension` (bool, default `false`) — compute the skeleton's box-counting fractal dimension as a summary feature (see [Glossary](glossary.md)). Forced to `0.0` whenever `spacing` is set and anisotropic.
+- `feature_extraction.radius_features` (bool, default `false`) — report the local radius (distance from each skeleton voxel to the nearest background voxel). Required for every radius/diameter/volume/surface_area feature at every level (object, branch, node).
 
 ### Output settings
 
 - `output.write_summary_csv` (bool, default `true`) — write `<image>_summary.csv`, one row per object.
-- `output.write_branch_csv` (bool, default `false`) — write `<image>_branches.csv` (requires `extraction.branches`).
-- `output.write_node_csv` (bool, default `false`) — write `<image>_nodes.csv` (requires `extraction.nodes`).
+- `output.write_branch_csv` (bool, default `false`) — write `<image>_branches.csv` (requires `feature_extraction.branches`).
+- `output.write_node_csv` (bool, default `false`) — write `<image>_nodes.csv` (requires `feature_extraction.nodes`).
 - `output.write_graphml` (bool, default `false`) — write the skeleton graph as `<image>_<object_id>_graph.graphml`, one file per object (nodes = graph nodes, edges = branches).
 - `output.write_networkx_graph` (bool, default `false`) — write the same graph as `<image>_<object_id>_graph.pkl`, a pickled `networkx.MultiGraph` — richer than GraphML (keeps NaN values and native Python types) but only readable from Python.
+- `output.write_skeleton_mask` (bool, default `false`) — next to each voxel list, also write its skeleton as a binary image, `<image>_voxels_mask.h5` and `<image>_voxels_post_mask.h5` (one uint8 dataset `skeleton`, 1 on the skeleton, with a `spacing` attribute when set). The whole image is held in memory while writing.
 
-An `output.write_*` flag set without its required `extraction.*` flag is rejected outright: both `maskel validate` and `maskel run --config` raise `ValueError` listing every mismatched pair, rather than silently writing nothing for that flag.
+An `output.write_*` flag set without its required `feature_extraction.*` flag is rejected outright: both `maskel validate` and `maskel run --config` raise `ValueError` listing every mismatched pair, rather than silently writing nothing for that flag.
 
 ## Sharing a config with napari-maskel
 
-The same config JSON works in both directions: a file written by `maskel init` (or hand-edited, or copied from a voxel list's attributes) can be loaded straight into the napari-maskel widget with **Load recipe**, and a config tuned interactively in the widget can be exported with **Save recipe** and passed to `maskel run --config` for reproducible processing — as in the multi-label example above. Both consume exactly the same schema described in Configurable parameters, since `maskel.config` is the single source of truth both projects import.
+napari-maskel still uses maskel 2.x and its schema-7 configs (**Save recipe**/**Load recipe**); those configs are not accepted by this version.
 
 ## License
 

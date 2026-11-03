@@ -6,7 +6,12 @@ from PIL import Image
 
 from maskel.io.images import load_image, open_image
 from maskel.io.tables import write_csv
-from maskel.io.voxels import VoxelList, read_voxels, write_voxels
+from maskel.io.voxels import (
+    VoxelList,
+    read_voxels,
+    write_skeleton_mask,
+    write_voxels,
+)
 
 
 class TestLoadImage:
@@ -201,6 +206,15 @@ class TestVoxels:
         assert loaded.shape == (10, 10)
         assert loaded.spacing == (2.0, 0.5)
         assert loaded.attrs == {"stage": "skeletonize"}
+
+    def test_skeleton_mask(self, tmp_path):
+        write_skeleton_mask(tmp_path / "m.h5", self._voxels())
+        with h5py.File(tmp_path / "m.h5", "r") as f:
+            mask = f["skeleton"][()]
+            assert tuple(f["skeleton"].attrs["spacing"]) == (2.0, 0.5)
+        expected = np.zeros((10, 10), np.uint8)
+        expected[[5, 1, 1], [5, 2, 1]] = 1
+        np.testing.assert_array_equal(mask, expected)
 
 
 class TestWriteCsv:

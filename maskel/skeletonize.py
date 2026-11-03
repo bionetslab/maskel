@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage as ndi
 
-from maskel.config import ExtractionConfig
+from maskel.config import PreprocessingConfig
 from maskel.io.images import open_hdf5
 from maskel.io.voxels import VoxelList
 from maskel.preprocessing import crop_pad, preprocess_binary, preprocessing_margin
@@ -44,7 +44,7 @@ class _LabelStats:
 
 def skeletonize(
     image,
-    extraction: ExtractionConfig,
+    preprocessing: PreprocessingConfig,
     *,
     spacing: tuple[float, ...] | None = None,
     tile_shape: int | tuple[int, ...] | None = None,
@@ -56,11 +56,15 @@ def skeletonize(
     """Preprocess, thin and measure every label of *image*, tiles in *jobs* processes reading *source* (HDF5 path, dataset)."""
     ndim = image.ndim
     halo = per_axis(halo, ndim)
-    margin = preprocessing_margin(extraction, spacing, ndim)
+    margin = preprocessing_margin(preprocessing, spacing, ndim)
     grid = TileGrid.build(
         image.shape, tile_shape, tuple(h + m for h, m in zip(halo, margin))
     )
-    if len(grid) > 1 and extraction.fill_holes and extraction.max_hole_diameter <= 0:
+    if (
+        len(grid) > 1
+        and preprocessing.fill_holes
+        and preprocessing.max_hole_diameter <= 0
+    ):
         raise ValueError(
             "fill_holes without max_hole_diameter only works on a single tile."
         )
@@ -68,7 +72,7 @@ def skeletonize(
     parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     stats: dict[int, _LabelStats] = {}
     reporter = ProgressReporter("Skeletonizing", grid, progress)
-    args = (extraction, spacing, len(grid) > 1)
+    args = (preprocessing, spacing, len(grid) > 1)
     for tile, (tile_parts, tile_stats) in _tile_results(
         image, grid, args, jobs, source
     ):
@@ -78,7 +82,7 @@ def skeletonize(
         reporter.advance(tile)
     reporter.done()
 
-    voxels = _assemble(image.shape, spacing, parts, stats, crop_pad(extraction))
+    voxels = _assemble(image.shape, spacing, parts, stats, crop_pad(preprocessing))
     if len(grid) > 1:
         _warn_small_halo(voxels.radius, halo, spacing)
     return voxels
@@ -143,7 +147,7 @@ def _skeletonize_tile_in_worker(tile: Tile, *args) -> tuple[list, dict]:
 def _skeletonize_tile(
     block: np.ndarray,
     tile: Tile,
-    extraction: ExtractionConfig,
+    preprocessing: PreprocessingConfig,
     spacing: tuple[float, ...] | None,
     tiled: bool,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray]], dict[int, tuple]]:
@@ -157,7 +161,7 @@ def _skeletonize_tile(
 
     in_core = ndi.find_objects(block[core])
     boxes = ndi.find_objects(block)
-    pad = crop_pad(extraction)
+    pad = crop_pad(preprocessing)
     parts = []
     stats = {}  # label -> (mask voxels, bbox start, bbox stop) in the core
     for index, core_box in enumerate(in_core):
@@ -171,10 +175,10 @@ def _skeletonize_tile(
         crop_start = np.array([s.start for s in crop])
         binary = preprocess_binary(
             (block[crop] == label).astype(np.uint8),
-            opening_radius=extraction.opening_radius,
-            closing_iterations=extraction.closing_iterations,
-            fill_holes=extraction.fill_holes,
-            max_hole_diameter=extraction.max_hole_diameter,
+            opening_radius=preprocessing.opening_radius,
+            closing_iterations=preprocessing.closing_iterations,
+            fill_holes=preprocessing.fill_holes,
+            max_hole_diameter=preprocessing.max_hole_diameter,
             spacing=spacing,
         )
 

@@ -10,7 +10,7 @@ import numpy as np
 from pandas import DataFrame
 from skan import Skeleton, summarize
 
-from maskel.config import ExtractionConfig
+from maskel.config import FeatureConfig
 from maskel.features.fractal import fractal_dimension
 from maskel.features.nodes import extract_node_features
 from maskel.features.radii import (
@@ -50,10 +50,10 @@ class LabelFeatures:
     node_records: list[dict[str, object]]
 
 
-def analyze(voxels: VoxelList, extraction: ExtractionConfig) -> Iterator[LabelFeatures]:
+def analyze(voxels: VoxelList, features: FeatureConfig) -> Iterator[LabelFeatures]:
     """Features of every label of *voxels* that has a graph."""
     spacing = voxels.spacing
-    include_fractal = extraction.fractal_dimension
+    include_fractal = features.fractal_dimension
     if include_fractal and spacing is not None and len(set(spacing)) > 1:
         print(
             "Warning: fractal_dimension is invalid for anisotropic "
@@ -65,18 +65,18 @@ def analyze(voxels: VoxelList, extraction: ExtractionConfig) -> Iterator[LabelFe
     for part in voxels:
         graph = build_graph(part.coords, voxels.shape, spacing)
         if graph is not None:
-            yield _analyze_label(part, graph, spacing, extraction, include_fractal)
+            yield _analyze_label(part, graph, spacing, features, include_fractal)
 
 
 def _analyze_label(
     part: LabelVoxels,
     graph: Skeleton,
     spacing: tuple[float, ...] | None,
-    extraction: ExtractionConfig,
+    features: FeatureConfig,
     include_fractal: bool,
 ) -> LabelFeatures:
     """Features of one label's graph."""
-    radius = part.radius if extraction.mask_radius else None
+    radius = part.radius if features.radius_features else None
     branch_data = summarize(graph, separator="-")
 
     stats = None
@@ -97,7 +97,7 @@ def _analyze_label(
         branch_data["straightness"] = straightness
 
     summary = {}
-    if extraction.summary:
+    if features.summary:
         summary = extract_summary_features(
             branch_data,
             mask_voxels=part.mask_voxels,
@@ -109,14 +109,14 @@ def _analyze_label(
         summary["object_id"] = part.label
 
     branch_records = []
-    if extraction.branches:
+    if features.branches:
         branch_records = [
             {**row, "object_id": part.label}
             for row in branch_data.to_dict(orient="records")
         ]
 
     node_records = []
-    if extraction.nodes:
+    if features.nodes:
         node_records = [
             {**row, "object_id": part.label}
             for row in extract_node_features(graph, branch_data, radius=radius)

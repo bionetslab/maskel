@@ -87,6 +87,16 @@ def write_voxels(path: Path | str, voxels: VoxelList) -> None:
             f.attrs[key] = json.dumps(value)
 
 
+def write_skeleton_mask(path: Path | str, voxels: VoxelList) -> None:
+    """Write the skeleton of *voxels* as a binary uint8 image to an HDF5 file at *path*."""
+    mask = np.zeros(voxels.shape, dtype=np.uint8)
+    mask[tuple(voxels.coords.T)] = 1
+    with h5py.File(path, "w") as f:
+        f.create_dataset("skeleton", data=mask, chunks=True, compression="gzip")
+        if voxels.spacing is not None:
+            f["skeleton"].attrs["spacing"] = voxels.spacing
+
+
 def read_voxels(path: Path | str) -> VoxelList:
     """Read a voxel list written by `write_voxels`."""
     with h5py.File(path, "r") as f:

@@ -4,31 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 7
+CONFIG_SCHEMA_VERSION = 8
 
-COLORABLE_BRANCH_PROPERTIES = [
-    "object_id",
-    "tortuosity",
-    "branch-distance",
-    "euclidean-distance",
-    "straightness",
-    "mean-pixel-value",
-    "stdev-pixel-value",
-    "mean_radius",
-    "std_radius",
-    "min_radius",
-    "max_radius",
-    "mean_diameter",
-    "std_diameter",
-    "min_diameter",
-    "max_diameter",
-    "volume",
-    "surface_area",
-]
+_BLOCKS = ("preprocessing", "postprocessing", "feature_extraction", "output")
 
 
 def _warn_unknown_keys(known: set[str], data: dict[str, Any]) -> None:
@@ -40,80 +22,85 @@ def _warn_unknown_keys(known: set[str], data: dict[str, Any]) -> None:
         )
 
 
-# output.<flag> -> the extraction.<flag> it requires to actually produce
-# anything - without the paired extraction flag, the output flag is a
+def _from_dict(cls, data: dict[str, Any]):
+    """An instance of the dataclass *cls* from *data*, defaults for missing keys."""
+    _warn_unknown_keys({f.name for f in fields(cls)}, data)
+    return cls(**{f.name: data.get(f.name, f.default) for f in fields(cls)})
+
+
+# output.<flag> -> the feature_extraction.<flag> it requires to actually
+# produce anything - without the paired feature flag, the output flag is a
 # silent no-op (nothing is written, no error, no warning) rather than the
 # error a misconfigured "requires X" combination should be.
-_OUTPUT_REQUIRES_EXTRACTION = {
+_OUTPUT_REQUIRES_FEATURE = {
     "write_branch_csv": "branches",
     "write_node_csv": "nodes",
 }
 
 
 def _validate_output_requirements(
-    extraction: ExtractionConfig, output: OutputConfig
+    features: FeatureConfig, output: OutputConfig
 ) -> None:
     problems = [
-        f"output.{out_flag}=true requires extraction.{req_flag}=true"
-        for out_flag, req_flag in _OUTPUT_REQUIRES_EXTRACTION.items()
-        if getattr(output, out_flag) and not getattr(extraction, req_flag)
+        f"output.{out_flag}=true requires feature_extraction.{req_flag}=true"
+        for out_flag, req_flag in _OUTPUT_REQUIRES_FEATURE.items()
+        if getattr(output, out_flag) and not getattr(features, req_flag)
     ]
     if problems:
         raise ValueError("Invalid config:\n  " + "\n  ".join(problems))
 
 
 @dataclass
-class ExtractionConfig:
-    """Configuration for what to extract from a skeleton."""
+class PreprocessingConfig:
+    """Morphological clean-up of the mask before thinning."""
 
-    branches: bool = False
-    branch_color_property: str = "tortuosity"
-    branch_text: bool = False
-    nodes: bool = False
-    summary: bool = True
-    fractal_dimension: bool = False
-    mask_radius: bool = False
+    opening_radius: int = 0
+    closing_iterations: int = 0
+    fill_holes: bool = False
+    max_hole_diameter: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PreprocessingConfig:
+        return _from_dict(cls, data)
+
+
+@dataclass
+class PostprocessingConfig:
+    """Graph clean-up of the skeleton after thinning."""
+
     junction_cleanup: bool = False
     cleanup_threshold_factor: float = 2.5
     prune_spurs: bool = False
     min_spur_length: float = 10.0
     spur_iterations: int = 1
-    opening_radius: int = 0
-    closing_iterations: int = 0
-    fill_holes: bool = False
-    max_hole_diameter: float = 0.0
-    show_preprocessed: bool = False
-    spacing: tuple[float, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "branches": self.branches,
-            "branch_color_property": self.branch_color_property,
-            "branch_text": self.branch_text,
-            "nodes": self.nodes,
-            "summary": self.summary,
-            "fractal_dimension": self.fractal_dimension,
-            "mask_radius": self.mask_radius,
-            "junction_cleanup": self.junction_cleanup,
-            "cleanup_threshold_factor": self.cleanup_threshold_factor,
-            "prune_spurs": self.prune_spurs,
-            "min_spur_length": self.min_spur_length,
-            "spur_iterations": self.spur_iterations,
-            "opening_radius": self.opening_radius,
-            "closing_iterations": self.closing_iterations,
-            "fill_holes": self.fill_holes,
-            "max_hole_diameter": self.max_hole_diameter,
-            "show_preprocessed": self.show_preprocessed,
-            "spacing": list(self.spacing) if self.spacing is not None else None,
-        }
+        return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ExtractionConfig:
-        _warn_unknown_keys({f.name for f in fields(cls)}, data)
-        kwargs = {f.name: data.get(f.name, f.default) for f in fields(cls)}
-        spacing = kwargs.get("spacing")
-        kwargs["spacing"] = tuple(spacing) if spacing is not None else None
-        return cls(**kwargs)
+    def from_dict(cls, data: dict[str, Any]) -> PostprocessingConfig:
+        return _from_dict(cls, data)
+
+
+@dataclass
+class FeatureConfig:
+    """Which features to compute from the skeleton."""
+
+    summary: bool = True
+    branches: bool = False
+    nodes: bool = False
+    fractal_dimension: bool = False
+    radius_features: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeatureConfig:
+        return _from_dict(cls, data)
 
 
 @dataclass
@@ -125,15 +112,10 @@ class OutputConfig:
     write_node_csv: bool = False
     write_graphml: bool = False
     write_networkx_graph: bool = False
+    write_skeleton_mask: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "write_summary_csv": self.write_summary_csv,
-            "write_branch_csv": self.write_branch_csv,
-            "write_node_csv": self.write_node_csv,
-            "write_graphml": self.write_graphml,
-            "write_networkx_graph": self.write_networkx_graph,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> OutputConfig:
@@ -144,17 +126,20 @@ class OutputConfig:
 
 @dataclass
 class PipelineConfig:
-    """Top-level config shared by napari and batch CLI."""
+    """Top-level config: the spacing plus one block per stage and the outputs."""
 
-    extraction: ExtractionConfig
-    output: OutputConfig
+    spacing: tuple[float, ...] | None = None
+    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
+    postprocessing: PostprocessingConfig = field(default_factory=PostprocessingConfig)
+    feature_extraction: FeatureConfig = field(default_factory=FeatureConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
     schema_version: int = CONFIG_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
-            "extraction": self.extraction.to_dict(),
-            "output": self.output.to_dict(),
+            "spacing": list(self.spacing) if self.spacing is not None else None,
+            **{block: getattr(self, block).to_dict() for block in _BLOCKS},
         }
 
     @classmethod
@@ -162,32 +147,33 @@ class PipelineConfig:
         if not isinstance(data, dict):
             raise TypeError("Config JSON must be an object")
 
-        _warn_unknown_keys({"schema_version", "extraction", "output"}, data)
-
         schema_version = int(data.get("schema_version", CONFIG_SCHEMA_VERSION))
         if schema_version != CONFIG_SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported schema_version={schema_version}. "
-                f"Expected {CONFIG_SCHEMA_VERSION}."
+                f"Expected {CONFIG_SCHEMA_VERSION}, which has a top-level 'spacing' "
+                f"and the blocks {', '.join(repr(b) for b in _BLOCKS)}. "
+                f"Create a new config with `maskel init`."
             )
 
-        extraction_data = data.get("extraction", {})
-        output_data = data.get("output", {})
+        _warn_unknown_keys({"schema_version", "spacing", *_BLOCKS}, data)
 
-        if not isinstance(extraction_data, dict):
-            raise TypeError("'extraction' must be an object")
-        if not isinstance(output_data, dict):
-            raise TypeError("'output' must be an object")
+        blocks = {block: data.get(block, {}) for block in _BLOCKS}
+        for block, block_data in blocks.items():
+            if not isinstance(block_data, dict):
+                raise TypeError(f"'{block}' must be an object")
 
-        extraction = ExtractionConfig.from_dict(extraction_data)
-        output = OutputConfig.from_dict(output_data)
-        _validate_output_requirements(extraction, output)
-
-        return cls(
-            extraction=extraction,
-            output=output,
+        spacing = data.get("spacing")
+        config = cls(
+            spacing=tuple(spacing) if spacing is not None else None,
+            preprocessing=PreprocessingConfig.from_dict(blocks["preprocessing"]),
+            postprocessing=PostprocessingConfig.from_dict(blocks["postprocessing"]),
+            feature_extraction=FeatureConfig.from_dict(blocks["feature_extraction"]),
+            output=OutputConfig.from_dict(blocks["output"]),
             schema_version=schema_version,
         )
+        _validate_output_requirements(config.feature_extraction, config.output)
+        return config
 
 
 def load_pipeline_config(path: str | Path) -> PipelineConfig:

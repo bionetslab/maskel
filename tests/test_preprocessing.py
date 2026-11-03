@@ -3,7 +3,7 @@ import pytest
 from scipy import ndimage as ndi
 
 from maskel._utils import _label_compact
-from maskel.config import ExtractionConfig
+from maskel.config import PreprocessingConfig
 from maskel.preprocessing import preprocess_binary, preprocessing_margin
 
 
@@ -47,17 +47,17 @@ class TestFillHoles:
 
 class TestPreprocessingMargin:
     def test_balls_and_hole_diameter_per_axis(self):
-        extraction = ExtractionConfig(
+        preprocessing = PreprocessingConfig(
             opening_radius=1,
             closing_iterations=2,
             fill_holes=True,
             max_hole_diameter=3.0,
         )
-        assert preprocessing_margin(extraction, (3.0, 0.5, 0.5), 3) == (8, 13, 13)
+        assert preprocessing_margin(preprocessing, (3.0, 0.5, 0.5), 3) == (8, 13, 13)
 
     def test_unlimited_holes_add_nothing(self):
-        extraction = ExtractionConfig(closing_iterations=1, fill_holes=True)
-        assert preprocessing_margin(extraction, None, 2) == (2, 2)
+        preprocessing = PreprocessingConfig(closing_iterations=1, fill_holes=True)
+        assert preprocessing_margin(preprocessing, None, 2) == (2, 2)
 
 
 class TestClosingBallFootprint:

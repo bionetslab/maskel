@@ -6,12 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
-from maskel.config import (
-    ExtractionConfig,
-    OutputConfig,
-    PipelineConfig,
-    load_pipeline_config,
-)
+from maskel.config import PipelineConfig, load_pipeline_config
 
 
 def add_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -55,13 +50,6 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
         "--dataset", default=None, help="Dataset path inside an HDF5 input."
     )
     parser.add_argument(
-        "--spacing",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-axis voxel size, overriding the config's extraction.spacing.",
-    )
-    parser.add_argument(
         "--tile-shape",
         nargs="+",
         type=int,
@@ -87,12 +75,6 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
         help="Tiles processed in parallel (HDF5 input only; 0 = all cores). "
         "Memory grows with each job by about one tile.",
     )
-    parser.add_argument(
-        "--progress",
-        choices=("auto", "bar", "lines", "off"),
-        default="auto",
-        help="Tile progress display.",
-    )
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -102,15 +84,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _config(args: argparse.Namespace) -> PipelineConfig:
-    """The config from --config (defaults without one), with --spacing applied."""
-    config = (
-        load_pipeline_config(Path(args.config))
-        if args.config
-        else PipelineConfig(extraction=ExtractionConfig(), output=OutputConfig())
-    )
-    if getattr(args, "spacing", None) is not None:
-        config.extraction.spacing = tuple(args.spacing)
-    return config
+    """The config from --config, or the defaults without one."""
+    return load_pipeline_config(Path(args.config)) if args.config else PipelineConfig()
 
 
 def _tiling(args: argparse.Namespace) -> dict:
@@ -124,7 +99,7 @@ def _tiling(args: argparse.Namespace) -> dict:
         "dataset": args.dataset,
         "tile_shape": None if args.tile_shape is None else unpack(args.tile_shape),
         "halo": DEFAULT_HALO if args.halo is None else unpack(args.halo),
-        "progress": args.progress,
+        "progress": "auto",
         "jobs": (os.cpu_count() or 1) if args.jobs == 0 else args.jobs,
     }
 

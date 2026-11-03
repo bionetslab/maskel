@@ -80,7 +80,7 @@ class TestStageCommands:
     def test_run_writes_everything(self, tmp_path, monkeypatch):
         _write_mask(tmp_path / "cross.h5")
         argv = ["run", "--input", tmp_path / "cross.h5", "--out", tmp_path / "out"]
-        argv += ["--tile-shape", "24", "--halo", "16", "--progress", "off"]
+        argv += ["--tile-shape", "24", "--halo", "16"]
         assert _main(monkeypatch, *argv) == 0
         names = {p.name for p in (tmp_path / "out").iterdir()}
         assert names == {
@@ -99,8 +99,6 @@ class TestStageCommands:
                 "skeletonize",
                 "--input",
                 tmp_path / "cross.h5",
-                "--progress",
-                "off",
                 *common,
             )
             == 0
@@ -123,11 +121,13 @@ class TestStageCommands:
         )
         assert (out / "cross_summary.csv").is_file()
 
-    def test_spacing_flag_overrides_config(self, tmp_path, monkeypatch):
+    def test_spacing_comes_from_config(self, tmp_path, monkeypatch):
+        from maskel.config import PipelineConfig, save_pipeline_config
         from maskel.io.voxels import read_voxels
 
         _write_mask(tmp_path / "cross.h5")
+        save_pipeline_config(PipelineConfig(spacing=(2.0, 0.5)), tmp_path / "cfg.json")
         argv = ["skeletonize", "--input", tmp_path / "cross.h5", "--out", tmp_path]
-        argv += ["--spacing", "2", "0.5", "--progress", "off"]
+        argv += ["--config", tmp_path / "cfg.json"]
         assert _main(monkeypatch, *argv) == 0
         assert read_voxels(tmp_path / "cross_voxels.h5").spacing == (2.0, 0.5)

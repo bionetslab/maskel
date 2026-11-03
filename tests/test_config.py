@@ -4,89 +4,45 @@ import pytest
 
 from maskel.config import (
     CONFIG_SCHEMA_VERSION,
-    ExtractionConfig,
+    FeatureConfig,
     OutputConfig,
     PipelineConfig,
+    PostprocessingConfig,
+    PreprocessingConfig,
     load_pipeline_config,
     save_pipeline_config,
 )
 
+BLOCKS = [
+    (PreprocessingConfig, {"opening_radius": 2, "fill_holes": True}),
+    (PostprocessingConfig, {"prune_spurs": True, "min_spur_length": 4.0}),
+    (FeatureConfig, {"branches": True, "radius_features": True}),
+]
 
-class TestExtractionConfig:
+
+class TestBlocks:
     def test_defaults(self):
-        c = ExtractionConfig()
-        assert c.branches is False
-        assert c.branch_text is False
-        assert c.summary is True
-        assert c.fractal_dimension is False
-        assert c.mask_radius is False
+        assert PreprocessingConfig().opening_radius == 0
+        assert PostprocessingConfig().cleanup_threshold_factor == 2.5
+        assert FeatureConfig().summary is True
+        assert FeatureConfig().radius_features is False
 
-    def test_custom_values(self):
-        c = ExtractionConfig(
-            branches=False,
-            branch_text=False,
-            summary=False,
-            fractal_dimension=True,
-            mask_radius=True,
-        )
-        assert c.branches is False
-        assert c.branch_text is False
-        assert c.summary is False
-        assert c.fractal_dimension is True
-        assert c.mask_radius is True
+    @pytest.mark.parametrize(("cls", "values"), BLOCKS)
+    def test_round_trip_dict(self, cls, values):
+        original = cls(**values)
+        assert cls.from_dict(original.to_dict()) == original
 
-    def test_round_trip_dict(self):
-        original = ExtractionConfig(
-            branches=True,
-            branch_text=False,
-            summary=True,
-            fractal_dimension=True,
-            mask_radius=False,
-        )
-        restored = ExtractionConfig.from_dict(original.to_dict())
-        assert restored == original
+    @pytest.mark.parametrize(("cls", "values"), BLOCKS)
+    def test_from_dict_defaults_on_missing_keys(self, cls, values):
+        assert cls.from_dict({}) == cls()
 
-    def test_opening_radius_default_and_round_trip(self):
-        assert ExtractionConfig().opening_radius == 0
-        original = ExtractionConfig(opening_radius=2)
-        assert ExtractionConfig.from_dict(original.to_dict()) == original
-
-    def test_from_dict_defaults_on_missing_keys(self):
-        c = ExtractionConfig.from_dict({})
-        assert c == ExtractionConfig()
-
-    def test_from_dict_warns_on_unknown_keys(self, capsys):
-        ExtractionConfig.from_dict({"branches": True, "foo": 1, "bar": 2})
+    @pytest.mark.parametrize(("cls", "values"), BLOCKS)
+    def test_from_dict_warns_on_unknown_keys(self, cls, values, capsys):
+        cls.from_dict({"foo": 1, "bar": 2})
         captured = capsys.readouterr()
         assert "ignored unknown keys" in captured.err
         assert "'bar'" in captured.err
         assert "'foo'" in captured.err
-
-    def test_spacing_defaults_to_none(self):
-        c = ExtractionConfig()
-        assert c.spacing is None
-
-    def test_spacing_round_trip_dict_preserves_tuple(self):
-        original = ExtractionConfig(spacing=(2.0, 1.0))
-        as_dict = original.to_dict()
-        assert as_dict["spacing"] == [2.0, 1.0]
-        restored = ExtractionConfig.from_dict(as_dict)
-        assert restored.spacing == (2.0, 1.0)
-        assert isinstance(restored.spacing, tuple)
-        assert restored == original
-
-    def test_spacing_none_round_trips_as_none(self):
-        original = ExtractionConfig(spacing=None)
-        as_dict = original.to_dict()
-        assert as_dict["spacing"] is None
-        restored = ExtractionConfig.from_dict(as_dict)
-        assert restored.spacing is None
-        assert restored == original
-
-    def test_spacing_from_dict_coerces_list_to_tuple(self):
-        c = ExtractionConfig.from_dict({"spacing": [1.0, 0.5, 0.5]})
-        assert c.spacing == (1.0, 0.5, 0.5)
-        assert isinstance(c.spacing, tuple)
 
 
 class TestOutputConfig:
@@ -96,6 +52,7 @@ class TestOutputConfig:
         assert c.write_branch_csv is False
         assert c.write_graphml is False
         assert c.write_networkx_graph is False
+        assert c.write_skeleton_mask is False
 
     def test_round_trip_dict(self):
         original = OutputConfig(
@@ -103,6 +60,7 @@ class TestOutputConfig:
             write_branch_csv=True,
             write_graphml=True,
             write_networkx_graph=True,
+            write_skeleton_mask=True,
         )
         restored = OutputConfig.from_dict(original.to_dict())
         assert restored == original
@@ -136,38 +94,51 @@ class TestOutputConfig:
 class TestPipelineConfig:
     def test_round_trip_dict(self):
         original = PipelineConfig(
-            extraction=ExtractionConfig(
-                branches=True, fractal_dimension=True, mask_radius=True
-            ),
+            spacing=(2.0, 1.0),
+            preprocessing=PreprocessingConfig(closing_iterations=1),
+            postprocessing=PostprocessingConfig(junction_cleanup=True),
+            feature_extraction=FeatureConfig(branches=True, fractal_dimension=True),
             output=OutputConfig(write_branch_csv=True),
         )
-        as_dict = original.to_dict()
-        restored = PipelineConfig.from_dict(as_dict)
+        restored = PipelineConfig.from_dict(original.to_dict())
         assert restored == original
 
-    def test_default_schema_version(self):
-        c = PipelineConfig(
-            extraction=ExtractionConfig(),
-            output=OutputConfig(),
-        )
-        assert c.schema_version == CONFIG_SCHEMA_VERSION
+    def test_defaults(self):
+        c = PipelineConfig()
+        assert c.schema_version == CONFIG_SCHEMA_VERSION == 8
+        assert c.spacing is None
+        assert c.preprocessing == PreprocessingConfig()
+        assert c.output == OutputConfig()
 
-    def test_from_dict_preserves_schema_version_in_object(self):
-        data = {
-            "schema_version": CONFIG_SCHEMA_VERSION,
-            "extraction": {},
-            "output": {},
-        }
-        c = PipelineConfig.from_dict(data)
-        assert c.schema_version == CONFIG_SCHEMA_VERSION
+    def test_to_dict_structure(self):
+        d = PipelineConfig().to_dict()
+        assert list(d) == [
+            "schema_version",
+            "spacing",
+            "preprocessing",
+            "postprocessing",
+            "feature_extraction",
+            "output",
+        ]
+        assert d["spacing"] is None
+
+    def test_spacing_round_trips_as_tuple(self):
+        d = PipelineConfig(spacing=(2.0, 1.0)).to_dict()
+        assert d["spacing"] == [2.0, 1.0]
+        restored = PipelineConfig.from_dict(d)
+        assert restored.spacing == (2.0, 1.0)
+        assert isinstance(restored.spacing, tuple)
+
+    def test_from_dict_empty_is_defaults(self):
+        assert PipelineConfig.from_dict({}) == PipelineConfig()
 
     def test_from_dict_unsupported_schema_version(self):
-        data = {
-            "schema_version": 999,
-            "extraction": {},
-            "output": {},
-        }
-        with pytest.raises(ValueError, match="Unsupported schema_version"):
+        with pytest.raises(ValueError, match="Unsupported schema_version=999"):
+            PipelineConfig.from_dict({"schema_version": 999})
+
+    def test_from_dict_rejects_schema_7_with_the_new_layout(self):
+        data = {"schema_version": 7, "extraction": {}, "output": {}}
+        with pytest.raises(ValueError, match="'preprocessing'.*maskel init"):
             PipelineConfig.from_dict(data)
 
     def test_from_dict_rejects_none(self):
@@ -178,124 +149,74 @@ class TestPipelineConfig:
         with pytest.raises(TypeError, match="must be an object"):
             PipelineConfig.from_dict(["not", "a", "dict"])
 
-    def test_from_dict_rejects_non_dict_extraction(self):
-        data = {
-            "schema_version": CONFIG_SCHEMA_VERSION,
-            "extraction": "bad",
-            "output": {},
-        }
-        with pytest.raises(TypeError, match="'extraction' must be an object"):
-            PipelineConfig.from_dict(data)
-
-    def test_from_dict_rejects_non_dict_output(self):
-        data = {
-            "schema_version": CONFIG_SCHEMA_VERSION,
-            "extraction": {},
-            "output": 123,
-        }
-        with pytest.raises(TypeError, match="'output' must be an object"):
-            PipelineConfig.from_dict(data)
+    @pytest.mark.parametrize(
+        "block", ["preprocessing", "postprocessing", "feature_extraction", "output"]
+    )
+    def test_from_dict_rejects_non_dict_block(self, block):
+        with pytest.raises(TypeError, match=f"'{block}' must be an object"):
+            PipelineConfig.from_dict({block: "bad"})
 
     @pytest.mark.parametrize(
-        ("output_flag", "extraction_flag"),
+        ("output_flag", "feature_flag"),
         [
             ("write_branch_csv", "branches"),
             ("write_node_csv", "nodes"),
         ],
     )
-    def test_from_dict_rejects_output_flag_without_matching_extraction_flag(
-        self, output_flag, extraction_flag
+    def test_from_dict_rejects_output_flag_without_matching_feature_flag(
+        self, output_flag, feature_flag
     ):
-        data = {
-            "extraction": {},
-            "output": {output_flag: True},
-        }
+        data = {"output": {output_flag: True}}
         with pytest.raises(
             ValueError,
-            match=f"output.{output_flag}=true requires extraction.{extraction_flag}=true",
+            match=f"output.{output_flag}=true requires "
+            f"feature_extraction.{feature_flag}=true",
         ):
             PipelineConfig.from_dict(data)
 
     def test_from_dict_reports_every_mismatched_pair_at_once(self):
-        data = {
-            "extraction": {},
-            "output": {
-                "write_branch_csv": True,
-                "write_node_csv": True,
-            },
-        }
+        data = {"output": {"write_branch_csv": True, "write_node_csv": True}}
         with pytest.raises(ValueError) as excinfo:
             PipelineConfig.from_dict(data)
         message = str(excinfo.value)
         assert "write_branch_csv" in message
         assert "write_node_csv" in message
 
-    def test_from_dict_accepts_output_flag_with_matching_extraction_flag(self):
+    def test_from_dict_accepts_output_flag_with_matching_feature_flag(self):
         data = {
-            "extraction": {"branches": True, "nodes": True, "mask_radius": True},
-            "output": {
-                "write_branch_csv": True,
-                "write_node_csv": True,
-            },
+            "feature_extraction": {"branches": True, "nodes": True},
+            "output": {"write_branch_csv": True, "write_node_csv": True},
         }
         c = PipelineConfig.from_dict(data)  # must not raise
         assert c.output.write_branch_csv is True
 
-    def test_from_dict_missing_schema_version_defaults(self):
-        data = {"extraction": {}, "output": {}}
-        c = PipelineConfig.from_dict(data)
-        assert c.schema_version == CONFIG_SCHEMA_VERSION
-
-    def test_to_dict_structure(self):
-        c = PipelineConfig(
-            extraction=ExtractionConfig(),
-            output=OutputConfig(),
-        )
-        d = c.to_dict()
-        assert "schema_version" in d
-        assert "extraction" in d
-        assert "output" in d
-        assert isinstance(d["extraction"], dict)
-        assert isinstance(d["output"], dict)
-
     def test_from_dict_warns_on_unknown_keys(self, capsys):
-        data = {
-            "schema_version": CONFIG_SCHEMA_VERSION,
-            "extraction": {},
-            "output": {},
-            "unknown": "should warn",
-        }
-        PipelineConfig.from_dict(data)
+        PipelineConfig.from_dict({"extraction": {}})
         captured = capsys.readouterr()
         assert "ignored unknown keys" in captured.err
-        assert "'unknown'" in captured.err
+        assert "'extraction'" in captured.err
 
 
 class TestConfigFileIO:
     def test_save_and_load_round_trip(self, tmp_path):
         config = PipelineConfig(
-            extraction=ExtractionConfig(mask_radius=True),
+            spacing=(1.0, 0.5, 0.5),
+            feature_extraction=FeatureConfig(radius_features=True),
             output=OutputConfig(write_graphml=True),
         )
         path = tmp_path / "config.json"
         save_pipeline_config(config, path)
-
-        loaded = load_pipeline_config(path)
-        assert loaded == config
+        assert load_pipeline_config(path) == config
 
     def test_save_creates_valid_json(self, tmp_path):
-        config = PipelineConfig(
-            extraction=ExtractionConfig(),
-            output=OutputConfig(),
-        )
         path = tmp_path / "pipeline.json"
-        save_pipeline_config(config, path)
+        save_pipeline_config(PipelineConfig(), path)
 
         with path.open(encoding="utf-8") as f:
             raw = json.load(f)
 
         assert raw["schema_version"] == CONFIG_SCHEMA_VERSION
-        assert raw["extraction"]["branches"] is False
+        assert raw["feature_extraction"]["branches"] is False
         assert raw["output"]["write_summary_csv"] is True
 
     def test_load_missing_file(self, tmp_path):
@@ -308,22 +229,7 @@ class TestConfigFileIO:
         with pytest.raises(json.JSONDecodeError):
             load_pipeline_config(path)
 
-    def test_save_to_string_path(self, tmp_path):
-        config = PipelineConfig(
-            extraction=ExtractionConfig(),
-            output=OutputConfig(),
-        )
+    def test_save_and_load_string_paths(self, tmp_path):
         path = str(tmp_path / "str_save.json")
-        save_pipeline_config(config, path)
-        loaded = load_pipeline_config(path)
-        assert loaded == config
-
-    def test_load_from_string_path(self, tmp_path):
-        config = PipelineConfig(
-            extraction=ExtractionConfig(),
-            output=OutputConfig(),
-        )
-        path = tmp_path / "str_config.json"
-        save_pipeline_config(config, path)
-        loaded = load_pipeline_config(str(path))
-        assert loaded == config
+        save_pipeline_config(PipelineConfig(), path)
+        assert load_pipeline_config(path) == PipelineConfig()
