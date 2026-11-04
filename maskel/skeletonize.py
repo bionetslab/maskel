@@ -24,14 +24,11 @@ from maskel.radii import skeleton_radii
 from maskel.thin import lee94_thin
 from maskel.tiling import DEFAULT_HALO, Tile, TileGrid, per_axis
 
-# Halo the thinning needs per voxel of radius. Lee94 has no strict bound; measured
-# needs were 0.5-2.1x the largest radius (tubes, blobs, subcrop2), so 4x leaves margin.
+# Halo the thinning needs per voxel of radius.
 HALO_PER_RADIUS = 4
 
-# Peak memory of one tile beyond its input block, measured at 7-11 bytes per read
-# voxel (4-50 % foreground), plus what a fresh worker process starts with.
-TILE_BYTES_PER_VOXEL = 12
-PROCESS_BYTES = 300 * 2**20
+# Peak memory of one tile beyond its input block
+TILE_BYTES_PER_VOXEL = 8
 
 
 @dataclass
@@ -54,19 +51,30 @@ def skeletonize(
     preprocessing: PreprocessingConfig,
     *,
     spacing: tuple[float, ...] | None = None,
-    tile_shape: int | tuple[int, ...] | None = None,
-    halo: int | tuple[int, ...] = DEFAULT_HALO,
+    tile_shape: int | tuple[int, ...] | str | None = None,
+    halo: int | tuple[int, ...] | None = None,
+    max_diameter: float | None = None,
     progress: str | bool = "off",
     jobs: int = 1,
     source: tuple[Path, str | None] | None = None,
 ) -> VoxelList:
     """Preprocess, thin and measure every label of *image*, tiles in *jobs* processes reading *source* (HDF5 path, dataset)."""
     ndim = image.ndim
-    halo = per_axis(halo, ndim)
+    auto = tile_shape == "auto"
+    _check_tiling_args(tile_shape, halo, max_diameter)
     margin = preprocessing_margin(preprocessing, spacing, ndim)
-    grid = TileGrid.build(
-        image.shape, tile_shape, tuple(h + m for h, m in zip(halo, margin))
-    )
+    if auto:
+        halo = _halo_for_diameter(max_diameter, spacing, ndim)
+        padding = tuple(h + m for h, m in zip(halo, margin))
+        budget = psutil.virtual_memory().available // (
+            max(jobs, 1) * TILE_BYTES_PER_VOXEL
+        )
+        grid = TileGrid.fit(image.shape, padding, budget)
+    else:
+        halo = per_axis(DEFAULT_HALO if halo is None else halo, ndim)
+        grid = TileGrid.build(
+            image.shape, tile_shape, tuple(h + m for h, m in zip(halo, margin))
+        )
     if (
         len(grid) > 1
         and preprocessing.fill_holes
@@ -78,7 +86,16 @@ def skeletonize(
     jobs = _usable_jobs(jobs, len(grid))
     if jobs > 1 and source is None:
         raise ValueError("Parallel tiles need an HDF5 input to read blocks from.")
-    _check_memory(grid, image.dtype, jobs)
+    if auto:
+        print(
+            f"Auto tiling: core {grid.tile_shape}, halo {grid.halo}, "
+            f"{grid.max_read_size / 1e9:.2f} GB per tile at 1 byte/voxel, "
+            f"{len(grid)} tile(s), {jobs} job(s), read overhead "
+            f"{grid.read_overhead:.2f}x.",
+            flush=True,  # same stream as the progress bar, so it stays above it
+        )
+    else:  # auto tiles are sized from free memory already
+        _check_memory(grid, image.dtype, jobs)
 
     parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     stats: dict[int, _LabelStats] = {}
@@ -99,6 +116,27 @@ def skeletonize(
     return _assemble(image.shape, spacing, parts, stats, crop_pad(preprocessing))
 
 
+def _check_tiling_args(tile_shape, halo, max_diameter) -> None:
+    """Fail on a halo or max diameter that the tiling mode does not use."""
+    if tile_shape == "auto":
+        if max_diameter is None or max_diameter <= 0:
+            raise ValueError("Auto tiling needs a positive max diameter.")
+        if halo is not None:
+            raise ValueError("Auto tiling computes the halo; leave it out.")
+    elif max_diameter is not None:
+        raise ValueError("A max diameter is only used with auto tiling.")
+    elif tile_shape is None and halo is not None:
+        raise ValueError("A halo is only used with a tile shape.")
+
+
+def _halo_for_diameter(
+    max_diameter: float, spacing: tuple[float, ...] | None, ndim: int
+) -> tuple[int, ...]:
+    """Halo per axis for structures up to *max_diameter* (spacing units)."""
+    step = (1.0,) * ndim if spacing is None else spacing
+    return tuple(math.ceil(HALO_PER_RADIUS * max_diameter / 2 / s) for s in step)
+
+
 def _usable_jobs(jobs: int, num_tiles: int) -> int:
     """*jobs*, capped with a warning at the number of tiles and CPU cores."""
     cores = os.cpu_count() or 1
@@ -115,7 +153,7 @@ def _check_memory(grid: TileGrid, dtype: np.dtype, jobs: int) -> None:
     """Fail before the run when *jobs* tiles at once would not fit in free memory."""
     input_bytes = dtype.itemsize + (0 if np.issubdtype(dtype, np.integer) else 8)
     per_tile = grid.max_read_size * (input_bytes + TILE_BYTES_PER_VOXEL)
-    needed = jobs * per_tile + (PROCESS_BYTES * jobs if jobs > 1 else 0)
+    needed = jobs * per_tile
     available = psutil.virtual_memory().available
     if needed > available:
         raise MemoryError(

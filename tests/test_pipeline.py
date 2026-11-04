@@ -17,7 +17,7 @@ from maskel.features import analyze
 from maskel.io.voxels import read_voxels
 from maskel.pipeline import run
 from maskel.postprocessing import postprocess
-from maskel.skeletonize import skeletonize
+from maskel.skeletonize import TILE_BYTES_PER_VOXEL, skeletonize
 from maskel.tiling import TileGrid
 
 
@@ -52,6 +52,25 @@ class TestTileGrid:
         assert (covered == 1).all()
         tile = list(grid)[4]  # the middle tile
         assert tile.read == (slice(3, 9), slice(2, 9))
+
+    def test_fit_takes_the_largest_cores_proportional_to_the_halo(self):
+        grid = TileGrid.fit((1000, 1000), (2, 4), max_read_size=3000)
+        assert grid.max_read_size <= 3000
+        assert grid.tile_shape[1] in (
+            2 * grid.tile_shape[0],
+            2 * grid.tile_shape[0] + 1,
+        )
+        bigger = TileGrid(
+            (1000, 1000), (grid.tile_shape[0] + 1, grid.tile_shape[1] + 2), (2, 4)
+        )
+        assert bigger.max_read_size > 3000
+
+    def test_fit_is_one_tile_when_everything_fits(self):
+        assert len(TileGrid.fit((50, 60), (5, 5), max_read_size=10**6)) == 1
+
+    def test_fit_fails_when_not_even_a_halo_fits(self):
+        with pytest.raises(MemoryError):
+            TileGrid.fit((50, 60), (5, 5), max_read_size=100)
 
 
 class TestSkeletonize:
@@ -132,6 +151,38 @@ class TestSkeletonize:
         )
         with pytest.raises(MemoryError, match="smaller tiles or fewer jobs"):
             skeletonize(_blobs((40, 40)), PreprocessingConfig(), tile_shape=20)
+
+    @pytest.mark.filterwarnings("ignore:halo")
+    def test_auto_tiling_matches_one_tile(self, monkeypatch):
+        mask = _instances((24, 40, 40), seed=2)
+        spacing = (2.0, 1.0, 1.0)
+        whole = skeletonize(mask, PreprocessingConfig(), spacing=spacing)
+        # room for 20,000 voxels per tile: several tiles of this mask
+        monkeypatch.setattr(
+            "psutil.virtual_memory",
+            lambda: type("Mem", (), {"available": TILE_BYTES_PER_VOXEL * 20000})(),
+        )
+        tiled = skeletonize(
+            mask,
+            PreprocessingConfig(),
+            spacing=spacing,
+            tile_shape="auto",
+            max_diameter=6,
+        )
+        _same(whole, tiled)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"tile_shape": "auto"}, "positive max diameter"),
+            ({"tile_shape": "auto", "max_diameter": 4, "halo": 8}, "computes the halo"),
+            ({"tile_shape": 20, "max_diameter": 4}, "only used with auto"),
+            ({"halo": 8}, "only used with a tile shape"),
+        ],
+    )
+    def test_tiling_arguments_must_match_the_mode(self, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            skeletonize(_blobs((40, 40)), PreprocessingConfig(), **kwargs)
 
     @pytest.mark.filterwarnings("ignore:halo")
     def test_jobs_are_capped_at_the_number_of_tiles(self):

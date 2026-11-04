@@ -52,11 +52,11 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tile-shape",
         nargs="+",
-        type=int,
         default=None,
         metavar="N",
-        help="Tile core size, one value or one per axis (HDF5 input only). Omit "
-        "for a single tile covering the whole image.",
+        help="Tile core size, one value or one per axis, or 'auto' to size tiles "
+        "from free memory and --max-diameter (HDF5 input only). Omit for a single "
+        "tile covering the whole image.",
     )
     parser.add_argument(
         "--halo",
@@ -65,7 +65,16 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="N",
         help="Voxels read beyond each tile core for the thinning, one value or "
-        "one per axis. Roughly 4x the largest radius in voxels.",
+        "one per axis (default 100). Roughly 4x the largest radius in voxels. "
+        "Not with --tile-shape auto.",
+    )
+    parser.add_argument(
+        "--max-diameter",
+        type=float,
+        default=None,
+        metavar="D",
+        help="Largest structure diameter, in spacing units (voxels without "
+        "spacing); required with --tile-shape auto, which sets the halo from it.",
     )
     parser.add_argument(
         "--jobs",
@@ -89,16 +98,19 @@ def _config(args: argparse.Namespace) -> PipelineConfig:
 
 
 def _tiling(args: argparse.Namespace) -> dict:
-    """Tiling keyword arguments from --tile-shape and --halo."""
-    from maskel.tiling import DEFAULT_HALO
+    """Tiling keyword arguments from --tile-shape, --halo and --max-diameter."""
 
     def unpack(values):
         return values[0] if len(values) == 1 else tuple(values)
 
+    tile_shape = args.tile_shape
+    if tile_shape is not None and tile_shape != ["auto"]:
+        tile_shape = unpack([int(v) for v in tile_shape])
     return {
         "dataset": args.dataset,
-        "tile_shape": None if args.tile_shape is None else unpack(args.tile_shape),
-        "halo": DEFAULT_HALO if args.halo is None else unpack(args.halo),
+        "tile_shape": "auto" if tile_shape == ["auto"] else tile_shape,
+        "halo": None if args.halo is None else unpack(args.halo),
+        "max_diameter": args.max_diameter,
         "progress": "auto",
         "jobs": (os.cpu_count() or 1) if args.jobs == 0 else args.jobs,
     }

@@ -69,11 +69,13 @@ A voxel list is an HDF5 file with the datasets `coords` (global voxel indices), 
 
 `--halo N` (one value, or one per axis; default `100`) is how many voxels are read around each tile for the thinning. As a rule of thumb it should be about 4 × the largest vessel radius in voxels, per axis (measured needs were 0.5–2 ×; Lee94 thinning has no strict bound); each finished tile is checked against that rule, and a warning names the tile and the halo it would need, so a long run can be stopped early. Preprocessing adds its own margin on top.
 
+`--tile-shape auto --max-diameter D` sizes the tiles automatically. `D` is the diameter of the largest structure of interest, in `spacing` units (voxels without spacing). The halo is set to 4 × its radius per axis (`2·D / spacing`), and the tile cores are made proportional to the halo and as large as possible while each read block, at about 8 bytes per voxel, fits into the free memory divided by `--jobs`. The chosen core, halo, tile count and read overhead are printed before the run. `--halo` is not used in this mode, and `--max-diameter` only in this one; `--halo` without `--tile-shape` is rejected as well.
+
 `--jobs N` (`-j`) processes `N` tiles at the same time, each in its own process (HDF5 input only; `0` uses all cores). The result is identical to a serial run. Memory grows by about one tile per job, so `--jobs` and `--tile-shape` together set the memory budget. More jobs than tiles or CPU cores are capped, with a warning. Calling `maskel.skeletonize.skeletonize(..., jobs=N)` from your own script needs the usual `if __name__ == "__main__":` guard, since the workers are started fresh.
 
 ### Checks before the run
 
-Before any tile is processed, a run stops with an error when `--tile-shape` or `--jobs` is used with a non-HDF5 input, when `fill_holes` has no `max_hole_diameter` but there is more than one tile, or when the largest tile, read with its halo, would not fit into free memory `--jobs` times over (estimated at the input's bytes per voxel plus about 12 bytes per voxel per tile). It warns when the halos make the run read more than twice the volume.
+Before any tile is processed, a run stops with an error when `--tile-shape` or `--jobs` is used with a non-HDF5 input, when `fill_holes` has no `max_hole_diameter` but there is more than one tile, or when the largest tile, read with its halo, would not fit into free memory `--jobs` times over (estimated at the input's bytes per voxel plus about 8 bytes per voxel per tile; measured on vessel masks with a few percent foreground, denser masks need more). It warns when the halos make the run read more than twice the volume.
 
 ### Output
 

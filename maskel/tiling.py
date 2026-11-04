@@ -102,6 +102,31 @@ class TileGrid:
             for axis in range(len(self.shape))
         )
 
+    @classmethod
+    def fit(
+        cls, shape: tuple[int, ...], halo: tuple[int, ...], max_read_size: int
+    ) -> TileGrid:
+        """Grid with the largest cores proportional to *halo* whose read blocks hold at most *max_read_size* voxels."""
+
+        def grid(k: float) -> TileGrid:
+            core = tuple(min(n, max(1, int(k * h))) for n, h in zip(shape, halo))
+            return cls(tuple(shape), core, tuple(halo))
+
+        if grid(0).max_read_size > max_read_size:
+            raise MemoryError(
+                f"Not even a 1-voxel tile core with halo {halo} fits into "
+                f"{max_read_size:,} voxels; use fewer jobs or a smaller max diameter."
+            )
+        low, high = 0.0, max(n / max(h, 1) for n, h in zip(shape, halo))
+        if grid(high).max_read_size <= max_read_size:
+            return grid(high)
+        for _ in range(50):
+            mid = (low + high) / 2
+            low, high = (
+                (mid, high) if grid(mid).max_read_size <= max_read_size else (low, mid)
+            )
+        return grid(low)
+
     @property
     def read_overhead(self) -> float:
         """Voxels read over the whole grid per voxel of volume."""

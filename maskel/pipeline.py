@@ -17,7 +17,6 @@ from maskel.io.voxels import (
 )
 from maskel.postprocessing import postprocess
 from maskel.skeletonize import skeletonize
-from maskel.tiling import DEFAULT_HALO
 
 SKELETON_SUFFIX = "_voxels"
 POSTPROCESSED_SUFFIX = "_voxels_post"
@@ -29,8 +28,9 @@ def run(
     config: PipelineConfig,
     *,
     dataset: str | None = None,
-    tile_shape: int | tuple[int, ...] | None = None,
-    halo: int | tuple[int, ...] = DEFAULT_HALO,
+    tile_shape: int | tuple[int, ...] | str | None = None,
+    halo: int | tuple[int, ...] | None = None,
+    max_diameter: float | None = None,
     progress: str | bool = "off",
     jobs: int = 1,
 ) -> None:
@@ -44,6 +44,7 @@ def run(
         dataset=dataset,
         tile_shape=tile_shape,
         halo=halo,
+        max_diameter=max_diameter,
         progress=progress,
         jobs=jobs,
     )
@@ -58,8 +59,9 @@ def run_skeletonize(
     name: str,
     *,
     dataset: str | None = None,
-    tile_shape: int | tuple[int, ...] | None = None,
-    halo: int | tuple[int, ...] = DEFAULT_HALO,
+    tile_shape: int | tuple[int, ...] | str | None = None,
+    halo: int | tuple[int, ...] | None = None,
+    max_diameter: float | None = None,
     progress: str | bool = "off",
     jobs: int = 1,
 ) -> VoxelList:
@@ -83,6 +85,7 @@ def run_skeletonize(
             spacing=spacing,
             tile_shape=tile_shape,
             halo=halo,
+            max_diameter=max_diameter,
             progress=progress,
             jobs=jobs,
             source=(Path(input_path), dataset) if is_hdf5 else None,

@@ -89,6 +89,13 @@ class TestStageCommands:
             "cross_summary.csv",
         }
 
+    def test_run_with_auto_tiles(self, tmp_path, monkeypatch):
+        _write_mask(tmp_path / "cross.h5")
+        argv = ["run", "--input", tmp_path / "cross.h5", "--out", tmp_path / "out"]
+        argv += ["--tile-shape", "auto", "--max-diameter", "4"]
+        assert _main(monkeypatch, *argv) == 0
+        assert (tmp_path / "out" / "cross_voxels.h5").is_file()
+
     def test_stages_one_at_a_time(self, tmp_path, monkeypatch):
         _write_mask(tmp_path / "cross.h5")
         out = tmp_path / "out"
