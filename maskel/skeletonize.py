@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import psutil
 from scipy import ndimage as ndi
 
 from maskel.config import PreprocessingConfig
@@ -23,8 +24,14 @@ from maskel.radii import skeleton_radii
 from maskel.thin import lee94_thin
 from maskel.tiling import DEFAULT_HALO, Tile, TileGrid, per_axis
 
-# Halo the thinning needs per voxel of radius (measured once: radius 2 needed 16).
-HALO_PER_RADIUS = 8
+# Halo the thinning needs per voxel of radius. Lee94 has no strict bound; measured
+# needs were 0.5-2.1x the largest radius (tubes, blobs, subcrop2), so 4x leaves margin.
+HALO_PER_RADIUS = 4
+
+# Peak memory of one tile beyond its input block, measured at 7-11 bytes per read
+# voxel (4-50 % foreground), plus what a fresh worker process starts with.
+TILE_BYTES_PER_VOXEL = 12
+PROCESS_BYTES = 300 * 2**20
 
 
 @dataclass
@@ -68,24 +75,54 @@ def skeletonize(
         raise ValueError(
             "fill_holes without max_hole_diameter only works on a single tile."
         )
+    jobs = _usable_jobs(jobs, len(grid))
+    if jobs > 1 and source is None:
+        raise ValueError("Parallel tiles need an HDF5 input to read blocks from.")
+    _check_memory(grid, image.dtype, jobs)
 
     parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     stats: dict[int, _LabelStats] = {}
     reporter = ProgressReporter("Skeletonizing", grid, progress)
     args = (preprocessing, spacing, len(grid) > 1)
+    warned = np.zeros(ndim, dtype=int)  # largest halo a warning already asked for
     for tile, (tile_parts, tile_stats) in _tile_results(
         image, grid, args, jobs, source
     ):
         parts.extend(tile_parts)
         for label, counts in tile_stats.items():
             stats.setdefault(label, _LabelStats()).add(*counts)
+        if len(grid) > 1:
+            warned = _warn_small_halo(tile, tile_parts, halo, spacing, warned)
         reporter.advance(tile)
     reporter.done()
 
-    voxels = _assemble(image.shape, spacing, parts, stats, crop_pad(preprocessing))
-    if len(grid) > 1:
-        _warn_small_halo(voxels.radius, halo, spacing)
-    return voxels
+    return _assemble(image.shape, spacing, parts, stats, crop_pad(preprocessing))
+
+
+def _usable_jobs(jobs: int, num_tiles: int) -> int:
+    """*jobs*, capped with a warning at the number of tiles and CPU cores."""
+    cores = os.cpu_count() or 1
+    if jobs > min(num_tiles, cores):
+        warnings.warn(
+            f"--jobs {jobs} capped to {min(num_tiles, cores)}: there are "
+            f"{num_tiles} tile(s) and {cores} CPU core(s).",
+            stacklevel=3,
+        )
+    return max(1, min(jobs, num_tiles, cores))
+
+
+def _check_memory(grid: TileGrid, dtype: np.dtype, jobs: int) -> None:
+    """Fail before the run when *jobs* tiles at once would not fit in free memory."""
+    input_bytes = dtype.itemsize + (0 if np.issubdtype(dtype, np.integer) else 8)
+    per_tile = grid.max_read_size * (input_bytes + TILE_BYTES_PER_VOXEL)
+    needed = jobs * per_tile + (PROCESS_BYTES * jobs if jobs > 1 else 0)
+    available = psutil.virtual_memory().available
+    if needed > available:
+        raise MemoryError(
+            f"{jobs} tile(s) of up to {grid.max_read_size:,} voxels need about "
+            f"{needed / 2**30:.1f} GiB, but only {available / 2**30:.1f} GiB is "
+            "free; use smaller tiles or fewer jobs."
+        )
 
 
 def _tile_results(
@@ -96,12 +133,10 @@ def _tile_results(
     source: tuple[Path, str | None] | None,
 ) -> Iterator[tuple[Tile, tuple[list, dict]]]:
     """Each tile with its `_skeletonize_tile` result, in order of completion."""
-    if jobs <= 1 or len(grid) == 1:
+    if jobs <= 1:
         for tile in grid:
             yield tile, _skeletonize_tile(np.asarray(image[tile.read]), tile, *args)
         return
-    if source is None:
-        raise ValueError("Parallel tiles need an HDF5 input to read blocks from.")
 
     threads = max(1, (os.cpu_count() or 1) // jobs)
     pool = ProcessPoolExecutor(
@@ -251,17 +286,23 @@ def _assemble(
 
 
 def _warn_small_halo(
-    radius: np.ndarray, halo: tuple[int, ...], spacing: tuple[float, ...] | None
-) -> None:
-    """Warn when the largest radius needs more halo than given on some axis."""
-    if radius.size == 0:
-        return
+    tile: Tile,
+    parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    halo: tuple[int, ...],
+    spacing: tuple[float, ...] | None,
+    warned: np.ndarray,
+) -> np.ndarray:
+    """Warn when *tile*'s largest radius needs more halo than given; return the largest need warned about."""
+    radius = max((p[1].max() for p in parts if len(p[1])), default=0.0)
     step = np.ones(len(halo)) if spacing is None else np.asarray(spacing)
-    needed = np.ceil(HALO_PER_RADIUS * radius.max() / step).astype(int)
-    if (needed > np.array(halo)).any():
+    needed = np.ceil(HALO_PER_RADIUS * radius / step).astype(int)
+    if ((needed > np.array(halo)) & (needed > warned)).any():
+        start = tuple(s.start for s in tile.core)
         warnings.warn(
-            f"Largest radius {radius.max():.3g} needs a halo of about "
+            f"Tile at {start}: largest radius {radius:.3g} needs a halo of about "
             f"{tuple(needed.tolist())} voxels, got {halo}; tile seams may differ "
             "from an untiled run.",
             stacklevel=3,
         )
+        return np.maximum(warned, needed)
+    return warned

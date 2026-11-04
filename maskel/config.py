@@ -113,6 +113,7 @@ class OutputConfig:
     write_graphml: bool = False
     write_networkx_graph: bool = False
     write_skeleton_mask: bool = False
+    write_skeleton_radii: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

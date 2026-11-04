@@ -10,6 +10,7 @@ from maskel.io.voxels import (
     VoxelList,
     read_voxels,
     write_skeleton_mask,
+    write_skeleton_radii,
     write_voxels,
 )
 
@@ -215,6 +216,16 @@ class TestVoxels:
         expected = np.zeros((10, 10), np.uint8)
         expected[[5, 1, 1], [5, 2, 1]] = 1
         np.testing.assert_array_equal(mask, expected)
+
+    def test_skeleton_radii(self, tmp_path):
+        write_skeleton_radii(tmp_path / "r.h5", self._voxels())
+        with h5py.File(tmp_path / "r.h5", "r") as f:
+            radii = f["radius"][()]
+            assert tuple(f["radius"].attrs["spacing"]) == (2.0, 0.5)
+        expected = np.zeros((10, 10), np.float32)
+        expected[[5, 1, 1], [5, 2, 1]] = [3.0, 2.0, 1.0]
+        assert radii.dtype == np.float32
+        np.testing.assert_array_equal(radii, expected)
 
 
 class TestWriteCsv:

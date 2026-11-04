@@ -116,11 +116,27 @@ class TestSkeletonize:
                 _blobs((40, 40)), PreprocessingConfig(fill_holes=True), tile_shape=20
             )
 
-    def test_warns_when_halo_is_small_for_the_radii(self):
+    def test_warns_once_per_need_when_halo_is_small_for_the_radii(self):
         mask = np.zeros((40, 40), np.uint8)
-        mask[10:30, 2:38] = 1
-        with pytest.warns(UserWarning, match="needs a halo"):
+        mask[10:30, 2:38] = 1  # one thick bar through all four tiles
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             skeletonize(mask, PreprocessingConfig(), tile_shape=20, halo=5)
+        halo_warnings = [w for w in caught if "needs a halo" in str(w.message)]
+        assert 1 <= len(halo_warnings) < 4
+
+    @pytest.mark.filterwarnings("ignore:halo")
+    def test_fails_before_the_run_without_enough_memory(self, monkeypatch):
+        monkeypatch.setattr(
+            "psutil.virtual_memory", lambda: type("Mem", (), {"available": 1000})()
+        )
+        with pytest.raises(MemoryError, match="smaller tiles or fewer jobs"):
+            skeletonize(_blobs((40, 40)), PreprocessingConfig(), tile_shape=20)
+
+    @pytest.mark.filterwarnings("ignore:halo")
+    def test_jobs_are_capped_at_the_number_of_tiles(self):
+        with pytest.warns(UserWarning, match="capped to 1"):
+            skeletonize(_blobs((40, 40)), PreprocessingConfig(), jobs=4)
 
 
 class TestAnalyze:
@@ -157,6 +173,13 @@ class TestAnalyze:
 
 
 class TestRun:
+    def test_tiling_needs_hdf5_input(self, tmp_path):
+        np.save(tmp_path / "mask.npy", _blobs((40, 40)))
+        config = PipelineConfig()
+        with pytest.raises(ValueError, match="Tiling needs an HDF5 input"):
+            run(tmp_path / "mask.npy", tmp_path / "out", config, tile_shape=20)
+        assert not (tmp_path / "out").exists()
+
     @pytest.mark.filterwarnings("ignore:halo")
     def test_writes_voxel_lists_and_tables(self, tmp_path):
         with h5py.File(tmp_path / "vessels.h5", "w") as f:
@@ -177,11 +200,14 @@ class TestRun:
         assert (out / "vessels_branches.csv").is_file()
         assert (out / "vessels_1_graph.graphml").is_file()
         assert not (out / "vessels_voxels_mask.h5").exists()
+        assert not (out / "vessels_voxels_radii.h5").exists()
 
     def test_writes_skeleton_masks(self, tmp_path):
         with h5py.File(tmp_path / "vessels.h5", "w") as f:
             f["mask"] = _blobs((40, 40))
-        config = PipelineConfig(output=OutputConfig(write_skeleton_mask=True))
+        config = PipelineConfig(
+            output=OutputConfig(write_skeleton_mask=True, write_skeleton_radii=True)
+        )
         run(tmp_path / "vessels.h5", tmp_path / "out", config)
 
         out = tmp_path / "out"
@@ -193,3 +219,9 @@ class TestRun:
             np.testing.assert_array_equal(
                 np.argwhere(mask), np.unique(voxels.coords, axis=0)
             )
+            with h5py.File(out / f"{stem}_radii.h5", "r") as f:
+                radii = f["radius"][()]
+            np.testing.assert_allclose(
+                radii[tuple(voxels.coords.T)], voxels.radius, rtol=1e-6
+            )
+            assert np.count_nonzero(radii) == np.count_nonzero(voxels.radius)

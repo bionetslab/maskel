@@ -55,8 +55,8 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help="Tile core size, one value or one per axis. Omit for a single tile; "
-        "only HDF5 input is read tile by tile.",
+        help="Tile core size, one value or one per axis (HDF5 input only). Omit "
+        "for a single tile covering the whole image.",
     )
     parser.add_argument(
         "--halo",
@@ -65,7 +65,7 @@ def _add_image_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="N",
         help="Voxels read beyond each tile core for the thinning, one value or "
-        "one per axis (default: 100). Roughly 8x the largest radius in voxels.",
+        "one per axis. Roughly 4x the largest radius in voxels.",
     )
     parser.add_argument(
         "--jobs",

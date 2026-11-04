@@ -95,6 +95,14 @@ class TileGrid:
             yield Tile(tuple(c for c, _ in spans), tuple(r for _, r in spans))
 
     @property
+    def max_read_size(self) -> int:
+        """Voxels in the largest read block."""
+        return prod(
+            max(r.stop - r.start for _, r in self._spans(axis))
+            for axis in range(len(self.shape))
+        )
+
+    @property
     def read_overhead(self) -> float:
         """Voxels read over the whole grid per voxel of volume."""
         read = prod(

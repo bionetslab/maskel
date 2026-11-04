@@ -89,12 +89,22 @@ def write_voxels(path: Path | str, voxels: VoxelList) -> None:
 
 def write_skeleton_mask(path: Path | str, voxels: VoxelList) -> None:
     """Write the skeleton of *voxels* as a binary uint8 image to an HDF5 file at *path*."""
-    mask = np.zeros(voxels.shape, dtype=np.uint8)
-    mask[tuple(voxels.coords.T)] = 1
+    _write_image(path, "skeleton", voxels, np.uint8, 1)
+
+
+def write_skeleton_radii(path: Path | str, voxels: VoxelList) -> None:
+    """Write the skeleton of *voxels* as a float32 image of their radii to an HDF5 file at *path*."""
+    _write_image(path, "radius", voxels, np.float32, voxels.radius)
+
+
+def _write_image(path, name: str, voxels: VoxelList, dtype, values) -> None:
+    """Write an image of *voxels*' shape, *values* on the skeleton and 0 elsewhere."""
+    image = np.zeros(voxels.shape, dtype=dtype)
+    image[tuple(voxels.coords.T)] = values
     with h5py.File(path, "w") as f:
-        f.create_dataset("skeleton", data=mask, chunks=True, compression="gzip")
+        f.create_dataset(name, data=image, chunks=True, compression="gzip")
         if voxels.spacing is not None:
-            f["skeleton"].attrs["spacing"] = voxels.spacing
+            f[name].attrs["spacing"] = voxels.spacing
 
 
 def read_voxels(path: Path | str) -> VoxelList:

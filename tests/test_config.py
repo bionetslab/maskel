@@ -53,6 +53,7 @@ class TestOutputConfig:
         assert c.write_graphml is False
         assert c.write_networkx_graph is False
         assert c.write_skeleton_mask is False
+        assert c.write_skeleton_radii is False
 
     def test_round_trip_dict(self):
         original = OutputConfig(
@@ -61,6 +62,7 @@ class TestOutputConfig:
             write_graphml=True,
             write_networkx_graph=True,
             write_skeleton_mask=True,
+            write_skeleton_radii=True,
         )
         restored = OutputConfig.from_dict(original.to_dict())
         assert restored == original

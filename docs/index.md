@@ -65,11 +65,15 @@ A voxel list is an HDF5 file with the datasets `coords` (global voxel indices), 
 
 ### Large images: tiles
 
-`--tile-shape N` (one value, or one per axis) splits the image into tiles that are processed one at a time, so only one tile has to fit in memory. Only HDF5 input is read tile by tile; every other format is loaded whole. Without `--tile-shape` the whole image is a single tile. Tiled and untiled runs give the same result as long as the halo is large enough.
+`--tile-shape N` (one value, or one per axis) splits the image into tiles that are processed one at a time, so only one tile has to fit in memory. Tiling needs HDF5 input; other formats are always loaded whole, so `--tile-shape` with them is rejected before anything is read. Without `--tile-shape` the whole image is a single tile. Tiled and untiled runs give the same result as long as the halo is large enough.
 
-`--halo N` (one value, or one per axis; default `100`) is how many voxels are read around each tile for the thinning. As a rule of thumb it should be about 8 × the largest vessel radius in voxels, per axis; a run warns when the measured radii suggest it is too small. Preprocessing adds its own margin on top.
+`--halo N` (one value, or one per axis; default `100`) is how many voxels are read around each tile for the thinning. As a rule of thumb it should be about 4 × the largest vessel radius in voxels, per axis (measured needs were 0.5–2 ×; Lee94 thinning has no strict bound); each finished tile is checked against that rule, and a warning names the tile and the halo it would need, so a long run can be stopped early. Preprocessing adds its own margin on top.
 
-`--jobs N` (`-j`) processes `N` tiles at the same time, each in its own process (HDF5 input only; `0` uses all cores). The result is identical to a serial run. Memory grows by about one tile per job, so `--jobs` and `--tile-shape` together set the memory budget. Calling `maskel.skeletonize.skeletonize(..., jobs=N)` from your own script needs the usual `if __name__ == "__main__":` guard, since the workers are started fresh.
+`--jobs N` (`-j`) processes `N` tiles at the same time, each in its own process (HDF5 input only; `0` uses all cores). The result is identical to a serial run. Memory grows by about one tile per job, so `--jobs` and `--tile-shape` together set the memory budget. More jobs than tiles or CPU cores are capped, with a warning. Calling `maskel.skeletonize.skeletonize(..., jobs=N)` from your own script needs the usual `if __name__ == "__main__":` guard, since the workers are started fresh.
+
+### Checks before the run
+
+Before any tile is processed, a run stops with an error when `--tile-shape` or `--jobs` is used with a non-HDF5 input, when `fill_holes` has no `max_hole_diameter` but there is more than one tile, or when the largest tile, read with its halo, would not fit into free memory `--jobs` times over (estimated at the input's bytes per voxel plus about 12 bytes per voxel per tile). It warns when the halos make the run read more than twice the volume.
 
 ### Output
 
@@ -86,7 +90,7 @@ A config JSON has a `schema_version` (currently 8, must match exactly), a top-le
   "preprocessing": {"opening_radius": 0, "closing_iterations": 0, "fill_holes": false, "max_hole_diameter": 0.0},
   "postprocessing": {"junction_cleanup": false, "cleanup_threshold_factor": 2.5, "prune_spurs": false, "min_spur_length": 10.0, "spur_iterations": 1},
   "feature_extraction": {"summary": true, "branches": false, "nodes": false, "fractal_dimension": false, "radius_features": false},
-  "output": {"write_summary_csv": true, "write_branch_csv": false, "write_node_csv": false, "write_graphml": false, "write_networkx_graph": false, "write_skeleton_mask": false}
+  "output": {"write_summary_csv": true, "write_branch_csv": false, "write_node_csv": false, "write_graphml": false, "write_networkx_graph": false, "write_skeleton_mask": false, "write_skeleton_radii": false}
 }
 ```
 
@@ -125,6 +129,7 @@ A config JSON has a `schema_version` (currently 8, must match exactly), a top-le
 - `output.write_graphml` (bool, default `false`) — write the skeleton graph as `<image>_<object_id>_graph.graphml`, one file per object (nodes = graph nodes, edges = branches).
 - `output.write_networkx_graph` (bool, default `false`) — write the same graph as `<image>_<object_id>_graph.pkl`, a pickled `networkx.MultiGraph` — richer than GraphML (keeps NaN values and native Python types) but only readable from Python.
 - `output.write_skeleton_mask` (bool, default `false`) — next to each voxel list, also write its skeleton as a binary image, `<image>_voxels_mask.h5` and `<image>_voxels_post_mask.h5` (one uint8 dataset `skeleton`, 1 on the skeleton, with a `spacing` attribute when set). The whole image is held in memory while writing.
+- `output.write_skeleton_radii` (bool, default `false`) — like `write_skeleton_mask`, but each skeleton voxel holds its radius instead of 1: `<image>_voxels_radii.h5` and `<image>_voxels_post_radii.h5`, one float32 dataset `radius`, 0 on the background. Radii are in `spacing` units (voxels without spacing). Also held in memory whole while writing.
 
 An `output.write_*` flag set without its required `feature_extraction.*` flag is rejected outright: both `maskel validate` and `maskel run --config` raise `ValueError` listing every mismatched pair, rather than silently writing nothing for that flag.
 
