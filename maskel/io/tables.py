@@ -36,9 +36,10 @@ def write_features(
     name: str,
     results: Iterable[LabelFeatures],
     output: OutputConfig,
-) -> None:
-    """Write every label's graphs as they come, then the summary, branch and node tables."""
+) -> list[Path]:
+    """Write every label's graphs as they come, then the summary, branch and node tables; return the paths written."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
     summary, branches, nodes = [], [], []
     for result in results:
         if result.summary:
@@ -53,13 +54,20 @@ def write_features(
         if output.write_graphml:
             path = out_dir / f"{name}_{result.object_id}_graph.graphml"
             write_graphml(*graph_args, path, **graph_kwargs)
+            written.append(path)
         if output.write_networkx_graph:
             path = out_dir / f"{name}_{result.object_id}_graph.pkl"
             write_networkx_pickle(*graph_args, path, **graph_kwargs)
+            written.append(path)
 
-    if output.write_summary_csv:
-        write_csv(out_dir / f"{name}_summary.csv", summary)
-    if output.write_branch_csv:
-        write_csv(out_dir / f"{name}_branches.csv", branches)
-    if output.write_node_csv:
-        write_csv(out_dir / f"{name}_nodes.csv", nodes)
+    tables = [
+        (output.write_summary_csv, "summary", summary),
+        (output.write_branch_csv, "branches", branches),
+        (output.write_node_csv, "nodes", nodes),
+    ]
+    for enabled, table, rows in tables:
+        path = out_dir / f"{name}_{table}.csv"
+        if enabled and rows:
+            write_csv(path, rows)
+            written.append(path)
+    return written

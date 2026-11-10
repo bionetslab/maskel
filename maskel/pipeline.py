@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+
+import numpy as np
 
 from maskel.config import PipelineConfig
 from maskel.features import analyze
@@ -16,6 +19,7 @@ from maskel.io.voxels import (
     write_voxels,
 )
 from maskel.postprocessing import postprocess
+from maskel.progress import format_duration
 from maskel.skeletonize import skeletonize
 
 SKELETON_SUFFIX = "_voxels"
@@ -74,6 +78,7 @@ def run_skeletonize(
             f"Tiling needs an HDF5 input, got '{Path(input_path).name}'; "
             "convert it to HDF5 or leave out the tile shape."
         )
+    start = time.monotonic()
     with open_image(input_path, dataset) as image:
         if spacing is not None and len(spacing) != image.ndim:
             raise ValueError(
@@ -90,6 +95,11 @@ def run_skeletonize(
             jobs=jobs,
             source=(Path(input_path), dataset) if is_hdf5 else None,
         )
+    with_skeleton = len(np.unique(voxels.label))
+    _report(
+        f"Skeletonized in {_since(start)}: {len(voxels.coords):,} skeleton voxels "
+        f"in {with_skeleton:,} of {len(voxels.labels):,} label(s)."
+    )
     voxels.attrs = {"stage": "skeletonize", "source": str(input_path)}
     _write(voxels, out_dir, name + SKELETON_SUFFIX, config)
     return voxels
@@ -99,7 +109,14 @@ def run_postprocess(
     voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
 ) -> VoxelList:
     """Stage 2: write and return the cleaned-up voxel list."""
+    start = time.monotonic()
     cleaned = postprocess(voxels, config.postprocessing)
+    before, after = len(voxels.coords), len(cleaned.coords)
+    change = (after - before) / before if before else 0.0
+    _report(
+        f"Postprocessed in {_since(start)}: {before:,} -> {after:,} skeleton "
+        f"voxels ({change:+.1%})."
+    )
     cleaned.attrs = {**voxels.attrs, "stage": "postprocess"}
     _write(cleaned, out_dir, name + POSTPROCESSED_SUFFIX, config)
     return cleaned
@@ -109,8 +126,27 @@ def run_features(
     voxels: VoxelList, out_dir: Path, config: PipelineConfig, name: str
 ) -> None:
     """Stage 3: write the feature tables and graphs of *voxels*."""
-    features = analyze(voxels, config.feature_extraction)
-    write_features(out_dir, name, features, config.output)
+    start = time.monotonic()
+    counts = {"labels": 0, "branches": 0}
+
+    def counted(results):
+        for result in results:
+            counts["labels"] += 1
+            counts["branches"] += len(result.branch_data)
+            yield result
+
+    features = counted(analyze(voxels, config.feature_extraction))
+    written = write_features(out_dir, name, features, config.output)
+    _report(
+        f"Extracted features in {_since(start)}: {counts['labels']:,} of "
+        f"{len(voxels.labels):,} label(s) with a graph, {counts['branches']:,} branches."
+    )
+    graphs = [p for p in written if p.suffix in (".graphml", ".pkl")]
+    for path in written:
+        if path not in graphs:
+            _report(f"  Wrote '{path.name}' ({_file_size(path)}).")
+    if graphs:
+        _report(f"  Wrote {len(graphs):,} graph file(s).")
 
 
 def load_voxels(path: Path) -> tuple[VoxelList, str]:
@@ -125,8 +161,36 @@ def _write(voxels: VoxelList, out_dir: Path, stem: str, config: PipelineConfig) 
     """Write *voxels* with the config that produced them, plus the configured skeleton images."""
     out_dir.mkdir(parents=True, exist_ok=True)
     voxels.attrs["config"] = config.to_dict()
-    write_voxels(out_dir / f"{stem}.h5", voxels)
+    dense = "x".join(str(n) for n in voxels.shape)
+    outputs = [("voxel list", write_voxels, f"{stem}.h5")]
     if config.output.write_skeleton_mask:
-        write_skeleton_mask(out_dir / f"{stem}_mask.h5", voxels)
+        outputs.append((f"dense {dense} skeleton mask", write_skeleton_mask, f"{stem}_mask.h5"))
     if config.output.write_skeleton_radii:
-        write_skeleton_radii(out_dir / f"{stem}_radii.h5", voxels)
+        outputs.append((f"dense {dense} skeleton radii", write_skeleton_radii, f"{stem}_radii.h5"))
+    for what, write, filename in outputs:
+        start = time.monotonic()
+        write(out_dir / filename, voxels)
+        _report(
+            f"  Wrote {what} '{filename}' "
+            f"({_file_size(out_dir / filename)}, {_since(start)})."
+        )
+
+
+def _report(message: str) -> None:
+    """Print *message* to the console right away."""
+    print(message, flush=True)
+
+
+def _since(start: float) -> str:
+    """Time since *start* (a `time.monotonic` value), formatted."""
+    return format_duration(time.monotonic() - start)
+
+
+def _file_size(path: Path) -> str:
+    """Size of the file at *path* in kB, MB or GB."""
+    size = path.stat().st_size
+    if size >= 1e9:
+        return f"{size / 1e9:.2f} GB"
+    if size >= 1e6:
+        return f"{size / 1e6:.1f} MB"
+    return f"{size / 1e3:.1f} kB"
