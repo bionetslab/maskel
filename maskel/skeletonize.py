@@ -25,10 +25,16 @@ from maskel.thin import lee94_thin
 from maskel.tiling import DEFAULT_HALO, Tile, TileGrid, per_axis
 
 # Halo the thinning needs per voxel of radius.
-HALO_PER_RADIUS = 4
+HALO_PER_RADIUS = 2
 
 # Peak memory of one tile beyond its input block
 TILE_BYTES_PER_VOXEL = 8
+
+# Tiles per job auto tiling aims for, so idle workers can pick up the next tile
+TILES_PER_JOB = 3
+
+# Smallest auto core per voxel of padding; below it the halo overhead outweighs balancing
+MIN_CORE_PER_PADDING = 10
 
 
 @dataclass
@@ -69,7 +75,13 @@ def skeletonize(
         budget = psutil.virtual_memory().available // (
             max(jobs, 1) * TILE_BYTES_PER_VOXEL
         )
-        grid = TileGrid.fit(image.shape, padding, budget)
+        grid = TileGrid.fit(
+            image.shape,
+            padding,
+            budget,
+            min_tiles=TILES_PER_JOB * jobs if jobs > 1 else 1,
+            min_core=MIN_CORE_PER_PADDING,
+        )
     else:
         halo = per_axis(DEFAULT_HALO if halo is None else halo, ndim)
         grid = TileGrid.build(

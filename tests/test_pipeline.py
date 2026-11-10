@@ -68,6 +68,25 @@ class TestTileGrid:
     def test_fit_is_one_tile_when_everything_fits(self):
         assert len(TileGrid.fit((50, 60), (5, 5), max_read_size=10**6)) == 1
 
+    def test_fit_makes_at_least_min_tiles(self):
+        grid = TileGrid.fit((1000, 1000), (5, 5), max_read_size=10**6, min_tiles=12)
+        assert len(grid) >= 12
+        assert len(TileGrid((1000, 1000), (grid.tile_shape[0] + 10,) * 2, (5, 5))) < 12
+
+    def test_fit_keeps_cores_above_min_core_over_min_tiles(self):
+        grid = TileGrid.fit(
+            (200, 200), (5, 5), max_read_size=10**6, min_tiles=100, min_core=10
+        )
+        assert grid.tile_shape == (50, 50)
+        assert len(grid) == 16
+
+    def test_fit_lets_memory_win_over_min_core(self):
+        grid = TileGrid.fit(
+            (1000, 1000), (5, 5), max_read_size=1600, min_tiles=1, min_core=10
+        )
+        assert grid.max_read_size <= 1600
+        assert grid.tile_shape[0] < 50
+
     def test_fit_fails_when_not_even_a_halo_fits(self):
         with pytest.raises(MemoryError):
             TileGrid.fit((50, 60), (5, 5), max_read_size=100)

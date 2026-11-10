@@ -104,9 +104,14 @@ class TileGrid:
 
     @classmethod
     def fit(
-        cls, shape: tuple[int, ...], halo: tuple[int, ...], max_read_size: int
+        cls,
+        shape: tuple[int, ...],
+        halo: tuple[int, ...],
+        max_read_size: int,
+        min_tiles: int = 1,
+        min_core: float = 0.0,
     ) -> TileGrid:
-        """Grid with the largest cores proportional to *halo* whose read blocks hold at most *max_read_size* voxels."""
+        """Grid with cores proportional to *halo*, at least *min_tiles* tiles unless cores drop below *min_core* times *halo*, and read blocks of at most *max_read_size* voxels."""
 
         def grid(k: float) -> TileGrid:
             core = tuple(min(n, max(1, int(k * h))) for n, h in zip(shape, halo))
@@ -117,15 +122,10 @@ class TileGrid:
                 f"Not even a 1-voxel tile core with halo {halo} fits into "
                 f"{max_read_size:,} voxels; use fewer jobs or a smaller max diameter."
             )
-        low, high = 0.0, max(n / max(h, 1) for n, h in zip(shape, halo))
-        if grid(high).max_read_size <= max_read_size:
-            return grid(high)
-        for _ in range(50):
-            mid = (low + high) / 2
-            low, high = (
-                (mid, high) if grid(mid).max_read_size <= max_read_size else (low, mid)
-            )
-        return grid(low)
+        high = max(n / max(h, 1) for n, h in zip(shape, halo))
+        k_memory = _largest(lambda k: grid(k).max_read_size <= max_read_size, high)
+        k_tiles = _largest(lambda k: len(grid(k)) >= min_tiles, high)
+        return grid(min(k_memory, max(k_tiles, min_core)))
 
     @property
     def read_overhead(self) -> float:
@@ -135,3 +135,14 @@ class TileGrid:
             for axis in range(len(self.shape))
         )
         return read / prod(self.shape)
+
+
+def _largest(holds, high: float) -> float:
+    """Largest k in [0, *high*] for which *holds*(k), which is true up to some k and false beyond it."""
+    if holds(high):
+        return high
+    low = 0.0
+    for _ in range(50):
+        mid = (low + high) / 2
+        low, high = (mid, high) if holds(mid) else (low, mid)
+    return low
